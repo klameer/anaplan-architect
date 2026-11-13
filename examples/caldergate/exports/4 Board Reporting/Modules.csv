@@ -1,0 +1,8 @@
+﻿,Functional Area,Applies To,Time Scale,Time Range,Versions,Breakback,Users List,Cell Count,Notes,Read Access Driver,Write Access Driver,Data Tags,Managed By,Referenced By,Used in Dashboards,Line Items
+SYS01 Time,System,,Month,Model Calendar,Not Applicable,New Line Items: Off,Show All Users: On,72,,,,,,,,"Current Period?, Period Label"
+SYS00 Settings,System,,Not Applicable,Not Applicable,Not Applicable,New Line Items: Off,Show All Users: On,2,,,,,,'SYS01 Time',,"Current Period, Pack Title"
+DAT01 P&L,Data,Cost Centres,Month,Model Calendar,All,New Line Items: Off,Show All Users: On,134064,From FP&A CAL07.,,,,,'CAL01 KPIs',,"Revenue, COGS, Opex, Staff Cost, EBITDA, Depreciation, EBIT"
+DAT02 Board Lines,Data,,Month,Model Calendar,All,New Line Items: Off,Show All Users: On,576,"From FP&A OUT02, summed to total.",,,,,"'CAL01 KPIs', 'OUT01 Board Dashboard'",,"Revenue, EBITDA, Budget Revenue, Revenue Variance"
+DAT03 Headcount,Data,Departments,Month,Model Calendar,Not Applicable,New Line Items: Off,Show All Users: On,1296,,,,,,'CAL01 KPIs',,"FTE, Total Cost"
+CAL01 KPIs,Calculation,,Month,Model Calendar,All,New Line Items: Off,Show All Users: On,1008,,,,,,'OUT01 Board Dashboard',,"FTE, Revenue per FTE, Opex Ratio, Revenue Prior Year, Revenue Growth, EBITDA Margin, Revenue YTD"
+OUT01 Board Dashboard,Output,,Month,Model Calendar,All,New Line Items: Off,Show All Users: On,864,,,,,,,,"Revenue, EBITDA, Revenue per FTE, Revenue Growth, Commentary, Prepared By"

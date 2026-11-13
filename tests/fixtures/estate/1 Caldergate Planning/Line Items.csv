@@ -1,0 +1,38 @@
+,Format,Formula,Summary,Applies To,Time Scale,Time Range,Versions,Style,Cell Count,Notes,Referenced By,Module Name
+SYS01 Time Settings,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Current Period?,"{""dataType"":""BOOLEAN""}",ITEM(Time) = 'SYS00 Model Settings'.Current Period,,,Month,Model Calendar,Not Applicable,,24,,"'CAL02 Revenue'.Actual or Forecast, 'CAL03 Opex'.Actual or Forecast",SYS01 Time Settings
+Start of Month,"{""dataType"":""DATE""}",START(),,,Month,Model Calendar,Not Applicable,,24,,,SYS01 Time Settings
+SYS00 Model Settings,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Current Period,"{""dataType"":""TIME_ENTITY""}",,,,Not Applicable,Not Applicable,Not Applicable,,1,,'SYS01 Time Settings'.Current Period?,SYS00 Model Settings
+FX Rate USD,"{""dataType"":""NUMBER""}",,,,Not Applicable,Not Applicable,Not Applicable,,1,,'CAL02 Revenue'.Revenue USD,SYS00 Model Settings
+INP01 Volumes,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Units,"{""dataType"":""NUMBER""}",,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,'CAL02 Revenue'.Gross Revenue,INP01 Volumes
+Price,"{""dataType"":""NUMBER""}",,,Segments,Month,Model Calendar,Not Applicable,,72,,'CAL02 Revenue'.Gross Revenue,INP01 Volumes
+Discount %,"{""dataType"":""NUMBER""}",,,Segments,Not Applicable,Not Applicable,Not Applicable,,3,,'CAL02 Revenue'.Discounts,INP01 Volumes
+CAL02 Revenue,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Actual or Forecast,"{""dataType"":""TEXT""}","IF 'SYS01 Time Settings'.Current Period? THEN ""Actual"" ELSE ""Forecast""",,,Month,Model Calendar,Not Applicable,,24,,,CAL02 Revenue
+Gross Revenue,"{""dataType"":""NUMBER""}",'INP01 Volumes'.Units * 'INP01 Volumes'.Price[LOOKUP: Segment],,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,"Discounts, Net Revenue, 'OUT01 Board Pack'.Revenue",CAL02 Revenue
+Discounts,"{""dataType"":""NUMBER""}",Gross Revenue * 'INP01 Volumes'.'Discount %'[LOOKUP: Segment],,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,Net Revenue,CAL02 Revenue
+Net Revenue,"{""dataType"":""NUMBER""}",Gross Revenue - Discounts,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,"Revenue USD, 'CAL04 Margin'.Net Revenue, 'OUT01 Board Pack'.Net Revenue",CAL02 Revenue
+Revenue USD,"{""dataType"":""NUMBER""}",Net Revenue * 'SYS00 Model Settings'.FX Rate USD,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,,CAL02 Revenue
+Segment,"{""dataType"":""ENTITY""}",ITEM(Segments),,"Segments, Regions",Not Applicable,Not Applicable,Not Applicable,,30,,"Gross Revenue, Discounts",CAL02 Revenue
+CAL03 Opex,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Actual or Forecast,"{""dataType"":""TEXT""}","IF 'SYS01 Time Settings'.Current Period? THEN ""Actual"" ELSE ""Forecast""",,,Month,Model Calendar,Not Applicable,,24,,,CAL03 Opex
+Salaries,"{""dataType"":""NUMBER""}",,,Departments,Month,Model Calendar,Not Applicable,,120,,Total Opex,CAL03 Opex
+Bonus,"{""dataType"":""NUMBER""}",Salaries * 0.1,,Departments,Month,Model Calendar,Not Applicable,,120,,Total Opex,CAL03 Opex
+Total Opex,"{""dataType"":""NUMBER""}",Salaries + Bonus,,Departments,Month,Model Calendar,Not Applicable,,120,,"'CAL04 Margin'.Opex, 'OUT01 Board Pack'.Opex",CAL03 Opex
+Unused Helper,"{""dataType"":""NUMBER""}",Salaries * 2,,Departments,Month,Model Calendar,Not Applicable,,120,,,CAL03 Opex
+CAL04 Margin,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Net Revenue,"{""dataType"":""NUMBER""}",'CAL02 Revenue'.Net Revenue[SUM: 'CAL02 Revenue'.Segment],,Segments,Month,Model Calendar,Not Applicable,,72,,Margin,CAL04 Margin
+Opex,"{""dataType"":""NUMBER""}",'CAL03 Opex'.Total Opex[SUM: 'CAL03 Opex'.Segment Map],,Segments,Month,Model Calendar,Not Applicable,,72,,Margin,CAL04 Margin
+Margin,"{""dataType"":""NUMBER""}",Net Revenue - Opex,,Segments,Month,Model Calendar,Not Applicable,,72,,"Margin %, 'OUT01 Board Pack'.Margin",CAL04 Margin
+Margin %,"{""dataType"":""NUMBER""}",Margin / Net Revenue,,Segments,Month,Model Calendar,Not Applicable,,72,,,CAL04 Margin
+Opening Cash,"{""dataType"":""NUMBER""}",PREVIOUS(Closing Cash),,Segments,Month,Model Calendar,Not Applicable,,72,,Closing Cash,CAL04 Margin
+Closing Cash,"{""dataType"":""NUMBER""}",Opening Cash + Margin,,Segments,Month,Model Calendar,Not Applicable,,72,,Opening Cash,CAL04 Margin
+OUT01 Board Pack,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Revenue,"{""dataType"":""NUMBER""}",'CAL02 Revenue'.Gross Revenue,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,Revenue Copy,OUT01 Board Pack
+Revenue Copy,"{""dataType"":""NUMBER""}",Revenue,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,Revenue Copy 2,OUT01 Board Pack
+Revenue Copy 2,"{""dataType"":""NUMBER""}",Revenue Copy,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,,OUT01 Board Pack
+Net Revenue,"{""dataType"":""NUMBER""}",'CAL02 Revenue'.Net Revenue,,"Segments, Regions",Month,Model Calendar,Not Applicable,,720,,,OUT01 Board Pack
+Opex,"{""dataType"":""NUMBER""}",'CAL03 Opex'.Total Opex,,Departments,Month,Model Calendar,Not Applicable,,120,,,OUT01 Board Pack
+Margin,"{""dataType"":""NUMBER""}",'CAL04 Margin'.Margin,,Segments,Month,Model Calendar,Not Applicable,,72,,,OUT01 Board Pack

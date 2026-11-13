@@ -1,0 +1,23 @@
+# Run /architect on one machine:  docker compose up   then open http://localhost:8765
+#
+# The port is published to this machine only, so the app runs open (no login) for the one person at the keyboard.
+# To let others in on the network: remove ARCHITECT_OPEN, set ARCHITECT_ADMIN_USER and ARCHITECT_ADMIN_PASSWORD,
+# and publish "8765:8765". The admin then creates every other login from the admin panel.
+services:
+  architect:
+    build: .
+    image: anaplan-architect
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - architect-data:/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ARCHITECT_OPEN: "1"        # trusted single-user run: only safe while the port is published to localhost
+      ARCHITECT_DEMO: "1"        # write the two fictional demo workspaces on first start
+    restart: unless-stopped
+
+volumes:
+  architect-data:

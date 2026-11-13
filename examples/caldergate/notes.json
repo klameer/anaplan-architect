@@ -1,0 +1,179 @@
+[
+ {
+  "title": "What the estate is for",
+  "body": "Four models. `Caldergate Data Hub` loads NetSuite (GL, cost centres, accounts), Salesforce (orders, pipeline, customers) and Workday (employees) and feeds the spokes. `Caldergate FP&A` plans revenue, opex, headcount cost and cash and produces the management and board packs. `Workforce Planning` holds employee-level cost and sends headcount cost into FP&A monthly. `Board Reporting` is the KPI layer the board dashboard reads, refreshed from FP&A and Workforce after each close.",
+  "type": "purpose",
+  "status": "user_confirmed",
+  "scopes": [
+   "estate"
+  ]
+ },
+ {
+  "title": "Handover risks nobody has ticketed",
+  "body": "Three things a new architect should not be surprised by. The FX file has not been loaded since November 2023, so FP&A runs on a hardcoded rate. Workday is loaded twice, once by `Caldergate Data Hub` and once by `Workforce Planning`, and the two employee lists can drift. `Budget v2 DO NOT USE` is still selected by a board pack line. None of these is in a ticket.",
+  "type": "conclusion",
+  "status": "working_assumption",
+  "scopes": [
+   "estate"
+  ]
+ },
+ {
+  "title": "Who built what, and when",
+  "body": "`Caldergate Data Hub` and `Caldergate FP&A`: 2019, first partner, DISCO naming (SYS, INP, DAT, CAL, OUT). `Workforce Planning`: 2021, second partner, their own naming (Data -, Inputs -, Calcs -, Reports -). `Board Reporting`: 2023, built in-house by Dan. The conventions do not agree and nobody has renamed anything, because renaming breaks the saved views.",
+  "type": "conclusion",
+  "status": "user_confirmed",
+  "scopes": [
+   "estate"
+  ]
+ },
+ {
+  "title": "Owners, and the rule for changing a feed",
+  "body": "`Caldergate FP&A` and `Caldergate Data Hub` sit with Finance Systems. `Workforce Planning` belongs to HR analytics. `Board Reporting` is Dan's. Any change to an import between two models is agreed with the receiving model's owner before it is made, and made in a development copy first.",
+  "type": "constraint",
+  "status": "user_confirmed",
+  "scopes": [
+   "estate"
+  ]
+ },
+ {
+  "title": "Data Hub: what it loads and when",
+  "body": "`Daily Load` runs at 05:00 and brings GL transactions, sales orders and CRM pipeline. `Monthly Master Data` runs on the 1st for cost centres, accounts and employees. Products come from a manual PIM file from Marketing, last loaded June 2023: the product list is stale and nobody owns it. `CAL01 Volume Summary` exists so FP&A can import volumes without reading the raw orders.",
+  "type": "purpose",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Caldergate Data Hub"
+  ]
+ },
+ {
+  "title": "Workforce Planning: naming and the missing effort column",
+  "body": "Employee-level cost: `Data - Employees` is loaded from Workday, `Calcs - Cost` inflates salary and adds NI and pension, `Calcs - Headcount by CC` sums it to cost centre and role, and that is what FP&A imports into `INP03 Headcount`. The export was taken before Calculation Effort existed, so the effort chapter is blank for this model; ask for a fresh export before judging where its time goes.",
+  "type": "purpose",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Workforce Planning"
+  ]
+ },
+ {
+  "title": "Board Reporting refresh order",
+  "body": "`Refresh Pack` runs after FP&A's `Roll Forecast`, never before: it imports P&L by cost centre and the board pack lines from FP&A and headcount by department from Workforce. If the pack looks stale, check the order the processes ran, not the formulas.",
+  "type": "procedure",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Board Reporting"
+  ]
+ },
+ {
+  "title": "FP&A: read these modules first",
+  "body": "Start at `SYS01 Time Settings`: `SYS01 Time Settings.Actual?` is the flag every calculation reads. Then `DAT01 Actuals GL` and `INP02 Opex Drivers` for what comes in, `CAL02 Revenue`, `CAL03 Opex` and `CAL07 P&L by Cost Centre` for the logic, and `OUT02 Board Pack` for what goes out. Cost Centres by Accounts by Month by Versions is the model's spine; most of the cells are there.",
+  "type": "purpose",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Caldergate FP&A",
+   "Caldergate FP&A::SYS01 Time Settings.Actual?"
+  ]
+ },
+ {
+  "title": "Forecast Opex: why the mapping is in the formula",
+  "body": "The account-to-driver mapping lives in the IF chain because the first partner did not want a mapping table the business could edit. There is an open request to add a thirteenth branch for legal fees. Moving the mapping to a small lookup module is agreed in principle; nobody has had the time.",
+  "type": "decision",
+  "status": "working_assumption",
+  "scopes": [
+   "Caldergate FP&A::CAL03 Opex.Forecast Opex"
+  ]
+ },
+ {
+  "title": "CAL05 Opex OLD is kept on purpose, for now",
+  "body": "Replaced by `CAL03 Opex` in 2021 when driver-based opex went in. Kept until the FY22 audit file is closed, because the auditors' working papers reference its numbers. Nothing reads it; the cells and the calculation time are the price of keeping it. Once the audit is signed off it can go.",
+  "type": "decision",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::CAL05 Opex OLD"
+  ]
+ },
+ {
+  "title": "Benchmark Opex was a Q3 temp fix",
+  "body": "The SUM and LOOKUP in one formula went in as a temporary fix for the Q3 FY25 close and was meant to come out afterwards. Nobody has confirmed whether the department benchmark is still used on any page.",
+  "type": "decision",
+  "status": "working_assumption",
+  "scopes": [
+   "Caldergate FP&A::CAL06 Department Summary.Benchmark Opex"
+  ]
+ },
+ {
+  "title": "The FX file stopped in November 2023; the hardcoded rate is the stop-gap",
+  "body": "`Import FX from Treasury file` was always run by hand, outside any process, because Treasury's file is sometimes late and the actuals load must not wait for it. It has not been run since November 2023. The 1.27 USD rate hardcoded in `CAL02 Revenue` is the stop-gap since then, not a design choice.",
+  "type": "conclusion",
+  "status": "working_assumption",
+  "scopes": [
+   "Caldergate FP&A::SYS05 FX Rates",
+   "Caldergate FP&A::CAL02 Revenue"
+  ]
+ },
+ {
+  "title": "Depreciation Charge: correct, long, do not touch without the schedule",
+  "body": "The six-branch MOVINGSUM formula reconciles to the fixed asset register to the pound and has done every close since 2020. It is long because each asset class has its own life. Any rewrite is checked against the asset schedule for every class before it replaces this one.",
+  "type": "constraint",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::CAL10 Depreciation.Charge"
+  ]
+ },
+ {
+  "title": "Pack views keep Versions on purpose",
+  "body": "Lines in `OUT01 Management Pack` and `OUT02 Board Pack` are shown per version on the pack views on purpose: the board compares Actual, Forecast and Budget side by side. A line item in an OUT module that carries Versions its formula does not need is a reporting view, not waste. CAL and INP modules are a different matter: there, an axis the formula does not need is a candidate to remove. The cells Versions adds in the OUT modules are the cost of that comparison; when the model's size comes up, they are not something to fix.",
+  "type": "constraint",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::OUT01 Management Pack",
+   "Caldergate FP&A::OUT02 Board Pack"
+  ]
+ },
+ {
+  "title": "INP03 Headcount: the NI constants are in the wrong place",
+  "body": "`INP03 Headcount.NI Threshold` and `INP03 Headcount.NI Rate` sit in `INP03 Headcount` because the second partner wanted them next to the salaries. They are single numbers repeated over every cost centre, role, month and version. They belong in `SYS00 Model Settings`; moving them is safe if the formulas that read them are repointed in the same change.",
+  "type": "conclusion",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::INP03 Headcount.NI Threshold",
+   "Caldergate FP&A::INP03 Headcount.NI Rate"
+  ]
+ },
+ {
+  "title": "Versions in FP&A, and Budget v2",
+  "body": "Four versions: Actual, Forecast, Budget and `Budget v2 DO NOT USE`. Budget v2 was the mid-year re-cut in FY24 and was never approved. It is still selected by `OUT02 Board Pack.Old Budget Revenue`; ask Dan before removing the version, the board pack comparatives may still read it.",
+  "type": "constraint",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Caldergate FP&A",
+   "Caldergate FP&A::OUT02 Board Pack.Old Budget Revenue"
+  ]
+ },
+ {
+  "title": "The Hub v1 import is dead",
+  "body": "`Import from Caldergate Hub v1 - Cost Centres` into `SYS02 Cost Centre Attributes` is dead: the old hub was decommissioned in March 2021 and `Import from Caldergate Data Hub - Cost Centres` replaced it. The action was never deleted. It is safe to remove; nothing else references it.",
+  "type": "conclusion",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::SYS02 Cost Centre Attributes"
+  ]
+ },
+ {
+  "title": "Workforce rates are keyed by hand: the FP&A feed is not live",
+  "body": "`Import from Caldergate FP&A - Assumptions` into `Inputs - Settings` has not run since August 2022. HR analytics key the NI and pension rates by hand each year instead. The import names make FP&A look like a feed into Workforce; it is not, unless someone reinstates it.",
+  "type": "conclusion",
+  "status": "user_confirmed",
+  "scopes": [
+   "model:Workforce Planning",
+   "Workforce Planning::Inputs - Settings"
+  ]
+ },
+ {
+  "title": "Scenario planning: the ask for FY27",
+  "body": "`CAL09 Scenario Planning` is empty. A Scenarios list exists with five members (Base, Upside, Downside, Cost Cut, Price Rise) and is used nowhere. The CFO's ask for FY27: flex volumes, price and the opex drivers by scenario and see the P&L by cost centre under each. Whatever is designed reuses `CAL02 Revenue` and `CAL03 Opex` rather than copying them, and does not add Scenarios to the DAT modules.",
+  "type": "purpose",
+  "status": "user_confirmed",
+  "scopes": [
+   "Caldergate FP&A::CAL09 Scenario Planning"
+  ]
+ }
+]

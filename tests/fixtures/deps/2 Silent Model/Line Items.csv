@@ -1,0 +1,5 @@
+,Format,Formula,Summary,Applies To,Time Scale,Time Range,Versions,Style,Cell Count,Notes,Referenced By,Module Name
+INP01 Data,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+V,"{""dataType"":""NUMBER""}",,,Regions,Month,Model Calendar,Not Applicable,,240,,'CAL01 Calc'.R,INP01 Data
+CAL01 Calc,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+R,"{""dataType"":""NUMBER""}",'INP01 Data'.V * 3,,Regions,Month,Model Calendar,Not Applicable,,240,,,CAL01 Calc

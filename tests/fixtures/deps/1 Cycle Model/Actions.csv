@@ -1,0 +1,10 @@
+,Action,Start Date and Time (UTC),Most recent duration (ms),Notes,Used in Processes,Used in Dashboards
+Processes,,,,,,
+Nightly,,2026-09-01 02:00:00,8000,,,
+Imports,,,,,,
+Import W from Silent Model - Data,Import into 'CAL02 Diamond',2026-09-01 02:00:00,6000,,Nightly,
+Import Ghost,Import into 'Ghost Module',2025-01-01 00:00:00,100,,,
+Exports,,,,,,
+Export Report,Export from 'OUT01 Report',2026-09-01 02:05:00,900,,,
+Nightly,,,,,,
+Import W from Silent Model - Data,,,,,,

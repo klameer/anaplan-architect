@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anaplan-architect"
+version = "0.2.0"
+description = "A companion for Anaplan model builders: chat with your line item, module and action exports and your project documents; every answer cited and checked."
+readme = "README.md"
+requires-python = ">=3.10"
+# The two libraries are not on PyPI: each is pinned to the commit its release tag names (v0.1.0 and v0.2.0), the same
+# commits as pins.json and the Dockerfile. A commit cannot be moved; a tag can.
+dependencies = [
+  "anaplan-grammar @ git+https://github.com/klameer/anaplan-grammar@8a5683b50a7905318760ff7f53d83047db36e611",
+  "anaplan-estate @ git+https://github.com/klameer/anaplan-estate@559f4fdde000e79c6270c0d71132e5e5048f268a",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9", "pypdf>=4"]
+trace = ["langsmith>=0.1"]
+openai = ["openai>=1.40"]
+bedrock = ["anthropic[bedrock]>=0.40"]
+capture = ["playwright>=1.45"]
+
+[project.scripts]
+anaplan-architect = "anaplan_architect.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anaplan_architect"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples" = "anaplan_architect/examples"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

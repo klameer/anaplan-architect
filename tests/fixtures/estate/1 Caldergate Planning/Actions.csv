@@ -1,0 +1,10 @@
+,Action,Start Date and Time (UTC),Most recent duration (ms),Notes,Used in Processes,Used in Dashboards
+Processes,,,,,,
+Load Actuals,,2026-08-01 06:00:00,12000,,,
+Imports,,,,,,
+Import Actuals from NetSuite,Import into 'INP01 Volumes',2026-08-01 06:00:00,9000,,Load Actuals,
+Import FX from Treasury file,Import into 'SYS00 Model Settings',2024-01-15 10:00:00,300,,,
+Exports,,,,,,
+Export Board Pack,Export from 'OUT01 Board Pack',2026-08-02 09:00:00,2000,,,
+Load Actuals,,,,,,
+Import Actuals from NetSuite,,,,,,

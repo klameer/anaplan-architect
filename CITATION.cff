@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If this software helps your work, please cite it. A citation is requested, not required."
+title: "/architect: your Anaplan build buddy"
+abstract: "A companion for Anaplan model builders: chat with the line item, module and action exports of an estate of models and its project documents. Every answer cites the objects and passages it rests on and is checked before it is shown."
+type: software
+authors:
+  - family-names: Lameer
+    given-names: Karim
+    affiliation: CodelessOps
+version: 0.2.0
+date-released: 2026-11-13
+license: MIT
+url: "https://codelessops.com/anaplan-architect"
+repository-code: "https://github.com/klameer/anaplan-architect"
+keywords:
+  - Anaplan
+  - connected planning
+  - model review
+  - retrieval
+  - validation

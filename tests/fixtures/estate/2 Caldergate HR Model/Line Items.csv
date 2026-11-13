@@ -1,0 +1,10 @@
+,Format,Formula,Summary,Applies To,Time Scale,Time Range,Versions,Style,Cell Count,Calculation Effort,Notes,Referenced By,Module Name
+SYS01 Time Settings,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,,
+Current Period?,"{""dataType"":""BOOLEAN""}",ITEM(Time) = 'SYS00 Model Settings'.Current Period,,,Month,Model Calendar,Not Applicable,,24,10.00%,,'CAL01 Headcount Cost'.Cost,SYS01 Time Settings
+SYS00 Model Settings,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,,
+Current Period,"{""dataType"":""TIME_ENTITY""}",,,,Not Applicable,Not Applicable,Not Applicable,,1,00.00%,,'SYS01 Time Settings'.Current Period?,SYS00 Model Settings
+INP01 Headcount,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,,
+Heads,"{""dataType"":""NUMBER""}",,,"Departments, Regions",Month,Model Calendar,Not Applicable,,480,00.00%,Loaded from Planning,'CAL01 Headcount Cost'.Cost,INP01 Headcount
+Salary,"{""dataType"":""NUMBER""}",,,Departments,Month,Model Calendar,Not Applicable,,48,00.00%,,'CAL01 Headcount Cost'.Cost,INP01 Headcount
+CAL01 Headcount Cost,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,,
+Cost,"{""dataType"":""NUMBER""}",IF 'SYS01 Time Settings'.Current Period? THEN 'INP01 Headcount'.Heads * 'INP01 Headcount'.Salary ELSE 0,,"Departments, Regions",Month,Model Calendar,Not Applicable,,480,90.00%,,,CAL01 Headcount Cost

@@ -1,0 +1,14 @@
+,Format,Formula,Summary,Applies To,Time Scale,Time Range,Versions,Style,Cell Count,Notes,Referenced By,Module Name
+SYS01 Settings,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Rate,"{""dataType"":""NUMBER""}",,,,Not Applicable,Not Applicable,Not Applicable,,1,,'CAL02 Diamond'.Z,SYS01 Settings
+CAL01 Flow,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+A,"{""dataType"":""NUMBER""}",B * 2,,Regions,Month,Model Calendar,Not Applicable,,240,,"'CAL01 Flow'.C, 'OUT01 Report'.Total",CAL01 Flow
+B,"{""dataType"":""NUMBER""}",C + 1,,Regions,Month,Model Calendar,Not Applicable,,240,,'CAL01 Flow'.A,CAL01 Flow
+C,"{""dataType"":""NUMBER""}",A - 1,,Regions,Month,Model Calendar,Not Applicable,,240,,'CAL01 Flow'.B,CAL01 Flow
+CAL02 Diamond,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+W,"{""dataType"":""NUMBER""}",,,Regions,Month,Model Calendar,Not Applicable,,240,,"'CAL02 Diamond'.Y, 'CAL02 Diamond'.Z",CAL02 Diamond
+Y,"{""dataType"":""NUMBER""}",W * 2,,Regions,Month,Model Calendar,Not Applicable,,240,,'CAL02 Diamond'.X,CAL02 Diamond
+Z,"{""dataType"":""NUMBER""}",W + 'SYS01 Settings'.Rate,,Regions,Month,Model Calendar,Not Applicable,,240,,'CAL02 Diamond'.X,CAL02 Diamond
+X,"{""dataType"":""NUMBER""}",Y + Z,,Regions,Month,Model Calendar,Not Applicable,,240,,'OUT01 Report'.Total,CAL02 Diamond
+OUT01 Report,,,,,Not Applicable,Not Applicable,Not Applicable,,0,,,
+Total,"{""dataType"":""NUMBER""}",'CAL02 Diamond'.X + 'CAL01 Flow'.A,,Regions,Month,Model Calendar,Not Applicable,,240,,,OUT01 Report

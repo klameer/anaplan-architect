@@ -1,0 +1,14 @@
+.git
+.venv
+.claude
+web
+out
+tests
+docs
+tools
+*.pyc
+__pycache__
+.env
+.env.*
+!.env.example
+node_modules

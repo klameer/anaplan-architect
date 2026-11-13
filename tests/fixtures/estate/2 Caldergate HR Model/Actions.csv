@@ -1,0 +1,10 @@
+,Action,Start Date and Time (UTC),Most recent duration (ms),Notes,Used in Processes,Used in Dashboards
+Processes,,,,,,
+Refresh from Planning,,2026-08-03 07:00:00,5000,,,
+Imports,,,,,,
+Import from Caldergate Planning - Departments,Import into 'INP01 Headcount',2026-08-03 07:00:00,4000,,Refresh from Planning,
+Import from Caldergate Planning - Settings,Import into 'SYS00 Model Settings',2026-08-03 07:00:00,200,,Refresh from Planning,
+Import Open Roles.csv,Import into 'INP01 Headcount',,,,,
+Refresh from Planning,,,,,,
+Import from Caldergate Planning - Departments,,,,,,
+Import from Caldergate Planning - Settings,,,,,,

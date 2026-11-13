@@ -1,0 +1,9 @@
+.architect/
+.env
+out/
+data/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+vendor/

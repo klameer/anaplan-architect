@@ -1,0 +1,57 @@
+{
+  "about": "The demo state of /architect: two fictional workspaces. Everything here is invented; no real company, person or model is described. `anaplan-architect demo --data DATA` (or Reset the demo in Settings) writes exactly this, replacing any earlier copy.",
+  "workspaces": [
+    {
+      "id": "caldergate-demo",
+      "name": "Caldergate Distribution Group",
+      "label": "demo exports",
+      "models": [
+        {"name": "Caldergate Data Hub", "folder": "exports/1 Caldergate Data Hub"},
+        {"name": "Caldergate FP&A", "folder": "exports/2 Caldergate FP&A"},
+        {"name": "Workforce Planning", "folder": "exports/3 Workforce Planning"},
+        {"name": "Board Reporting", "folder": "exports/4 Board Reporting"}
+      ],
+      "notes": "notes.json",
+      "edges": [
+        {"from": "Caldergate FP&A", "to": "Workforce Planning", "state": "retired",
+         "reason": "Import from Caldergate FP&A - Assumptions into Inputs - Settings has not run since August 2022; HR analytics key the NI and pension rates by hand each year instead."}
+      ],
+      "documents": [
+        {"file": "documents/FPA design decision record v1.2.md",
+         "summary": "The implementation partner's design record for Caldergate FP&A: naming, time and versions, volumes, revenue, the opex forecast logic, FX, margin, the P&L by cost centre, depreciation, the packs, and the open items, each with the reason for the decision."},
+        {"file": "documents/Steering meeting notes 2023.md",
+         "summary": "Monthly notes of the planning systems steering meeting for 2023: the Treasury FX file stopping and the fixed 1.27 rate, the Budget v2 re-cut that was never approved, and the product master falling out of date."},
+        {"file": "documents/Partner handover note 2021.md",
+         "summary": "The second partner's handover of Workforce Planning: its own naming, the manual steps, why the NI constants sit beside the salaries in INP03 Headcount, the feed into FP&A, and the Hub v1 import left behind."},
+        {"file": "documents/CR-031 Legal fees driver.md",
+         "summary": "A change request to add a thirteenth branch to Forecast Opex for legal fees. Open. It records that moving the mapping to a lookup module is agreed in principle and out of scope."},
+        {"file": "documents/CR-044 Retire CAL05 Opex OLD.md",
+         "summary": "A change request to delete CAL05 Opex OLD, replaced by CAL03 Opex in 2021. Deferred until the FY22 audit file is closed, because the auditors' working papers reference its numbers."},
+        {"file": "documents/netsuite_gl_load.py",
+         "summary": "The script behind the Data Hub's Daily Load: it pulls general ledger transactions from NetSuite, maps the source system codes and writes the import file. Its docstrings say why Source System is held as text."}
+      ]
+    },
+    {
+      "id": "caldergate-stores-demo",
+      "name": "Caldergate Stores",
+      "label": "demo exports",
+      "models": [
+        {"name": "Caldergate Store Planning", "folder": "stores"}
+      ],
+      "notes": null,
+      "edges": [],
+      "documents": []
+    }
+  ],
+  "questions": [
+    {"key": "why", "workspace": "caldergate-demo", "moment": 1, "text": "Why is the account mapping written into the Forecast Opex formula instead of a lookup table?"},
+    {"key": "not-recorded", "workspace": "caldergate-demo", "text": "Why is the margin module called CAL04 Margn?"},
+    {"key": "plan", "workspace": "caldergate-demo", "moment": 3, "text": "Give me a plan to build scenario planning for FY27 in Caldergate FP&A: flex volumes, price and opex by scenario, and show the P&L by cost centre under each scenario."},
+    {"key": "overview", "workspace": "caldergate-demo", "text": "Give me an overview of the build."},
+    {"key": "improve", "workspace": "caldergate-demo", "moment": 6, "text": "How can we improve it?"},
+    {"key": "implications", "workspace": "caldergate-demo", "moment": 4, "text": "What are the implications of changing SYS05 FX Rates?"},
+    {"key": "count", "workspace": "caldergate-stores-demo", "moment": 5, "text": "How many line items use FINDITEM, and which modules are they in?"},
+    {"key": "plan-concise", "workspace": "caldergate-demo", "mode": "concise", "text": "Give me a plan to build a lookup module that replaces the account mapping inside Forecast Opex."},
+    {"key": "implications-concise", "workspace": "caldergate-demo", "mode": "concise", "text": "What are the implications of changing CAL03 Opex?"}
+  ]
+}

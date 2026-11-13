@@ -1,0 +1,14 @@
+{
+  "anaplan-grammar": {
+    "url": "https://github.com/klameer/anaplan-grammar",
+    "tag": "v0.1.0",
+    "sha": "8a5683b50a7905318760ff7f53d83047db36e611",
+    "version": "0.1.0"
+  },
+  "anaplan-estate": {
+    "url": "https://github.com/klameer/anaplan-estate",
+    "tag": "v0.2.0",
+    "sha": "559f4fdde000e79c6270c0d71132e5e5048f268a",
+    "version": "0.2.0"
+  }
+}
