@@ -31,7 +31,8 @@ RUN pip install -c constraints.txt ".[llm,web,openai,trace]"
 
 RUN useradd --create-home --uid 10001 architect && mkdir -p /data && chown architect /data
 USER architect
-VOLUME ["/data"]
+# No VOLUME line: Railway refuses a Dockerfile that has one. docker-compose.yml declares the /data volume;
+# with plain docker run, pass -v yourvolume:/data or the store is lost with the container.
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT','8765'), timeout=4)" || exit 1
 

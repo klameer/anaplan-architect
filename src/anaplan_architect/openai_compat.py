@@ -111,3 +111,37 @@ class ChatClient:
             else:
                 raise
         return from_chat(resp, kw["model"])
+
+
+class ResponsesClient:
+    """`client.messages.stream(...)` over OpenAI's Responses API with an API key. OpenAI's newer models refuse function
+    tools on chat completions while they reason ("use /v1/responses"), so api.openai.com is spoken to this way; any other
+    endpoint keeps chat completions, which is what OpenAI-compatible servers implement. The request and the event stream
+    are the ones the Codex route already translates (codex.to_responses, codex._Stream)."""
+    def __init__(self, model: str, inner=None, api_key: str | None = None, base_url: str | None = None, reasoning_effort: str | None = "medium"):
+        self.model = model; self.messages = self; self.effort = reasoning_effort
+        if inner is None:
+            import openai
+            inner = openai.OpenAI(base_url=base_url or None, api_key=api_key or "not-needed")
+        self.inner = inner
+
+    def stream(self, model=None, system=None, tools=None, messages=(), max_tokens: int | None = None, **_ignored):
+        import hashlib
+        from .codex import to_responses, _Stream
+        instructions, rtools, items = to_responses(system, tools, list(messages))
+        rk = {"model": model or self.model, "instructions": instructions, "input": items, "store": False,
+              "prompt_cache_key": hashlib.sha1((instructions + json.dumps(rtools, sort_keys=True)).encode("utf-8")).hexdigest()[:32]}
+        if rtools:
+            rk["tools"] = rtools; rk["tool_choice"] = "auto"
+        if self.effort and self.effort != "default":
+            rk["reasoning"] = {"effort": self.effort}
+        # no output limit is sent: on a reasoning model it would count the reasoning too and cut answers short
+        try:
+            raw = self.inner.responses.create(**rk, stream=True)
+        except Exception as e:
+            if "reasoning" in rk and "reasoning" in str(e):          # a model that does not reason refuses the setting
+                rk.pop("reasoning"); self.effort = None
+                raw = self.inner.responses.create(**rk, stream=True)
+            else:
+                raise
+        return _Stream(raw, rk["model"], source="OpenAI")

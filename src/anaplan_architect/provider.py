@@ -10,7 +10,8 @@ app never knows which one it is.
                AZURE_OPENAI_API_VERSION (optional)
     openai     any OpenAI-compatible chat-completions endpoint, OpenAI's own or one inside your organisation:
                OPENAI_BASE_URL (omit for api.openai.com), OPENAI_API_KEY (omit if the endpoint needs none),
-               ARCHITECT_MODEL (required)
+               ARCHITECT_MODEL (required). api.openai.com is called over the Responses API, any other endpoint over
+               chat completions; OPENAI_API=responses|chat overrides, OPENAI_REASONING (low|medium|high|default)
     codex      a ChatGPT subscription through `codex login` (~/.codex/auth.json); CODEX_MODEL, default the model in
                ~/.codex/config.toml; CODEX_REASONING (low|medium|high), default medium
     auto       anthropic when a key is present, else openai when OPENAI_BASE_URL or OPENAI_API_KEY and ARCHITECT_MODEL
@@ -69,8 +70,17 @@ def resolve(api_key: str | None = None, model_id: str | None = None) -> dict:
             return _none("openai: set ARCHITECT_MODEL to the model the endpoint serves")
         base = env("OPENAI_BASE_URL")
 
+        # api.openai.com is spoken to over the Responses API (its newer models refuse tools on chat completions); any
+        # other endpoint over chat completions, which is what OpenAI-compatible servers implement. OPENAI_API overrides.
+        style = (env("OPENAI_API") or ("chat" if base else "responses")).lower()
+        if style not in ("responses", "chat"):
+            return _none(f"OPENAI_API must be responses or chat; got {style!r}")
+        effort = (env("OPENAI_REASONING") or "medium").lower()
+
         def make():
-            from .openai_compat import ChatClient
+            from .openai_compat import ChatClient, ResponsesClient
+            if style == "responses":
+                return ResponsesClient(model, base_url=base, api_key=env("OPENAI_API_KEY"), reasoning_effort=effort)
             return ChatClient(model, base_url=base, api_key=env("OPENAI_API_KEY"))
         return {"provider": "openai", "model": model, "client_kw": {"client_factory": make}, "endpoint": _host(base) or "api.openai.com"}
     if want in ("codex", "auto") and codexmod.available():

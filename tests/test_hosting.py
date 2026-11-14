@@ -75,10 +75,12 @@ def test_a_stranger_gets_the_two_libraries_at_the_pinned_commits_everywhere():
 
 def test_the_image_keeps_the_store_on_the_volume_railway_attaches():
     """Review 2026-11-13, item 7: railway.json cannot declare a volume, so the image reads where Railway mounted one."""
-    import pathlib
+    import pathlib, re
     root = pathlib.Path(__file__).resolve().parents[1]
     docker = (root / "Dockerfile").read_text(encoding="utf-8")
-    assert "--data ${RAILWAY_VOLUME_MOUNT_PATH:-${ARCHITECT_DATA}}" in docker and 'VOLUME ["/data"]' in docker
+    assert "--data ${RAILWAY_VOLUME_MOUNT_PATH:-${ARCHITECT_DATA}}" in docker
+    # Railway refuses to build a Dockerfile with a VOLUME line (first deploy, 2026-11-14); compose declares the volume
+    assert not re.search(r"^VOLUME", docker, re.M) and "architect-data:/data" in (root / "docker-compose.yml").read_text(encoding="utf-8")
     assert "RAILWAY_VOLUME_MOUNT_PATH" in (root / "README.md").read_text(encoding="utf-8")
 
 

@@ -157,8 +157,8 @@ def to_responses(system, tools, messages) -> tuple[str, list[dict], list[dict]]:
 
 class _Stream:
     """Iterates Responses events, yields Anthropic-shaped events, builds the final message."""
-    def __init__(self, raw, model: str):
-        self.raw = raw; self.model = model
+    def __init__(self, raw, model: str, source: str = "Codex"):
+        self.raw = raw; self.model = model; self.source = source
         self.blocks: list = []; self._args: dict[int, dict] = {}; self._text = ""; self.usage = None
 
     def __enter__(self): return self
@@ -206,7 +206,7 @@ class _Stream:
                 return
             elif et in ("response.failed", "response.incomplete", "error"):
                 resp = g("response"); err = g("message") or (resp.get("error", {}).get("message") if isinstance(resp, dict) else None)
-                raise RuntimeError(f"Codex responses stream {et}: {err or 'unknown error'}")
+                raise RuntimeError(f"{self.source} responses stream {et}: {err or 'unknown error'}")
 
     def get_final_message(self):
         content: list = []
