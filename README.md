@@ -189,8 +189,9 @@ docker compose up
 ```
 
 Builds the image on your machine and opens at `http://localhost:8765`. No login: the port is published to your
-machine only. Two fictional demo workspaces are there on first start. The image is written and has not yet been
-built and run by its author; the route above is the one that has been followed from a clean clone.
+machine only. Two fictional demo workspaces are there on first start. The image has been built and run from this
+repository; not yet tried: `docker compose up` itself (it was started with `docker run`) and a question with a real
+model key inside the container. See [Hosting](docs/features/hosting.md).
 
 </details>
 
@@ -202,9 +203,30 @@ See [Hosting](docs/features/hosting.md).
 
 </details>
 
-You need a model: an Anthropic key, Claude on Bedrock, Azure OpenAI, or any OpenAI-compatible endpoint, including
-one inside your organisation. See [Model providers](docs/features/model-providers.md). Your exports and documents
-stay on the machine that runs it; what goes to the model for each answer is listed under that answer.
+### Your model key
+
+You need a model to get answers. Five kinds work:
+
+| `ARCHITECT_PROVIDER` | What you have |
+|---|---|
+| `anthropic` | An Anthropic API key |
+| `openai` | An OpenAI key, or any OpenAI-compatible endpoint, including one inside your organisation |
+| `azure` | Azure OpenAI |
+| `bedrock` | Claude on Amazon Bedrock |
+| `codex` | A ChatGPT subscription, through `codex login` |
+
+1. Copy `.env.example` to `.env`.
+2. Fill in one block: the file has one per provider, with exactly the variables it reads.
+3. Start (or restart) the app.
+
+`.env` is gitignored and never leaves your machine. With Docker, the compose file reads the same `.env`. On a
+server, set the same names as service variables.
+
+With no model set up, the app still opens, reads exports and shows the demo. The chat box is switched off and says
+why: *No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.*
+
+More: [Model providers](docs/features/model-providers.md). Your exports and documents stay on the machine that runs
+it; what goes to the model for each answer is listed under that answer.
 
 ### Try it on the demo first
 

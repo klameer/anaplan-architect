@@ -37,7 +37,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   function newChat() {
     if (!eid || !summary) { toast('Pick a workspace first.'); return }
     if (!summary.snapshot) { toast('Upload the exports and activate them first.'); return }
-    if (!summary.llm) { toast('No model key on the server: set one in .env and restart.'); return }
+    if (!summary.llm) { toast('No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.'); return }
     go(href(eid, 'chat', 'new'))
   }
   async function del(id: string, title: string) {

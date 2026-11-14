@@ -196,13 +196,14 @@ class Snapshots:
             p = Path(td) / name
             p.write_bytes(data)
             problem = _check(kind, p)
-        sha = self.blobs.put(data)
         stamp = uploaded_at or now()
-        with self.db.tx():
-            self.db.run("INSERT OR REPLACE INTO snapshot_files(snapshot_id, model_id, kind, blob_sha, original_name, uploaded_at, problem) VALUES (?,?,?,?,?,?,?)",
-                        sid, model_id, kind, sha, name, stamp, problem)
-            if s["status"] != "draft":
-                self.db.run("UPDATE snapshots SET status='draft' WHERE id=?", sid)
+        with self.blobs.lock:                    # the file and the row that refers to it go in as one step: a clear-out cannot land between them
+            sha = self.blobs.put(data)
+            with self.db.tx():
+                self.db.run("INSERT OR REPLACE INTO snapshot_files(snapshot_id, model_id, kind, blob_sha, original_name, uploaded_at, problem) VALUES (?,?,?,?,?,?,?)",
+                            sid, model_id, kind, sha, name, stamp, problem)
+                if s["status"] != "draft":
+                    self.db.run("UPDATE snapshots SET status='draft' WHERE id=?", sid)
         self._forget(sid)
         e = reg.get_estate(self.db, s["estate_id"])
         self.db.audit(e["workspace_id"], "snapshot.stage", sid, {"model": m["name"], "kind": kind, "name": name, "bytes": len(data), "problem": problem}, by)

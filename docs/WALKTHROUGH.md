@@ -288,9 +288,10 @@ docker compose up --build
 ```
 
 - **See**: `http://localhost:8765` with no login and the two demo workspaces already there.
-- **Not run**: Docker Desktop did not bring its engine up on this machine, so the image was never built. What was
-  run instead: the same install steps as the Dockerfile, in a clean environment, and the server started from that
-  install with the container's settings. It served the app and the demo, and the tests passed there.
+- **Run** (2026-11-14, from the public repository, started with `docker run`): healthy in about six seconds with
+  both demo workspaces, non-root, about 86 MB at rest. In hosted mode with a volume: sign-in, Secure cookies, the
+  security headers, 401 when signed out, and a restart (about a second) that keeps the login and its session.
+- **Not yet tried**: `docker compose up` itself, and a question with a real model key inside the container.
 
 ## 22. Tracing to LangSmith: each login's own choice
 
@@ -375,7 +376,7 @@ docker compose up --build
 - **Bert** stands around the answers, never in them (entry 24). He is a still everywhere: nothing of him moves.
 - **Light theme**: none.
 - **OCR**: none.
-- **Docker image**: written, never built.
+- **Docker image**: built and run; `docker compose up` itself and a real-key question inside the container not yet tried.
 - **Railway**: `railway.json` is written; no project exists and nothing is deployed.
 - **LangSmith**: not run against a real key.
 - **Public repo**: prepared locally, not pushed.

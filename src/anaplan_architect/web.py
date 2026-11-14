@@ -16,11 +16,12 @@ Layout under --data:
   estates/<id>/{meta.json,models/}     the pre-Orac layout, imported once at startup and left in place
 """
 from __future__ import annotations
-import datetime, json, os, re, shutil, tempfile
-from contextlib import asynccontextmanager
+import datetime, json, os, re, shutil, tempfile, threading
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from .store import Workspace
 from .questions import suggested
 from . import envfile
@@ -40,6 +41,7 @@ from .orac import documents as docsmod, lindex, demo as demomod, access
 from .orac.evidence import cite_id, note_provenance, NOTE_ID, SECTION_ID
 
 OPEN_PATHS = {"/api/auth/me", "/api/auth/login", "/health"}
+WORKSPACES_MAX = 16       # parsed workspaces kept ready; one more than that and the least recently opened is read again from its cache on next use
 SESSIONS_MAX = 32          # live conversations kept in memory; the oldest idle ones go, and come back from the store on their next message
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_QUESTION_CHARS = 8000
@@ -74,6 +76,30 @@ def _alias_list(v) -> list[str]:
     return [str(x).strip() for x in (v or []) if str(x).strip()]
 
 
+def _int_env(name: str, default: int, least: int = 1) -> int:
+    try:
+        return max(least, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+def model_error(e: Exception) -> tuple[int, str]:
+    """What a failed model call is to the person who asked: a provider's limit, overload, refusal or silence in one plain
+    sentence each, never the provider's raw error. Anything else keeps its own words."""
+    code = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    text = str(e).lower()
+    if code == 429 or "rate limit" in text or "rate_limit" in text:
+        return 503, ("The model provider is turning requests away for the moment: its rate limit, not this instance's and not yours. "
+                     "Wait a minute and try again.")
+    if code in (529, 503) or "overloaded" in text:
+        return 503, "The model provider is overloaded right now. Wait a minute and try again."
+    if code in (401, 403):
+        return 502, "The model provider refused this instance's key. Whoever runs the instance needs to check it; asking again will not help."
+    if "timed out" in text or "timeout" in text:
+        return 504, "The model took too long to answer. Try again; if it keeps happening, ask something narrower."
+    return 502, f"the model call failed: {e}"
+
+
 def create_app(data: str | Path, api_key: str | None = None, model_id: str = "claude-sonnet-5", client_factory=None, host: str = "127.0.0.1",
                tracer=None) -> FastAPI:
     envfile.load()
@@ -84,6 +110,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     @asynccontextmanager
     async def lifespan(_app):
+        try:                                         # the worker threads every plain route runs on: enough for the answers in flight and the pages beside them
+            import anyio.to_thread
+            anyio.to_thread.current_default_thread_limiter().total_tokens = _int_env("ARCHITECT_THREADS", 64, 8)
+        except Exception:
+            pass
         yield
         if held.get("jobs") is not None:             # the parse jobs stop with the server
             held["jobs"].shutdown()
@@ -134,6 +165,54 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             print(f"could not create the admin from ARCHITECT_ADMIN_USER: {ex}")
     app.state.loopback = loopback
 
+    # ---------- several people at once ----------
+    # One process serves everyone. The live workspaces and chats are shared dictionaries: one lock for changing them.
+    # An answer holds a worker thread while the model writes, and reading exports is a process of its own with the files
+    # in memory, so both are counted: a login may have MAX_CHATS_PER_LOGIN answers in flight and the instance MAX_CHATS;
+    # MAX_EXPORT_READS sets of exports are read at once. The one over a limit is told to wait, in words, with a 429.
+    cache_lock = threading.RLock()
+    building: dict[tuple[str, str], threading.Lock] = {}
+    limits = {"chats_per_login": _int_env("ARCHITECT_MAX_CHATS_PER_LOGIN", 2), "chats": _int_env("ARCHITECT_MAX_CHATS", 16),
+              "export_reads": _int_env("ARCHITECT_MAX_EXPORT_READS", 2)}
+    try:
+        limits["export_wait_s"] = max(0.0, float(os.environ.get("ARCHITECT_EXPORT_WAIT_S") or 20))
+    except ValueError:
+        limits["export_wait_s"] = 20.0
+    app.state.limits = limits
+    app.state.in_flight = {"total": 0, "by_login": {}}
+    flight_lock = threading.Lock()
+    export_gate = threading.BoundedSemaphore(limits["export_reads"])
+
+    def _enter_chat(uid: str | None) -> None:
+        f, k = app.state.in_flight, uid or "-"
+        with flight_lock:
+            if f["by_login"].get(k, 0) >= limits["chats_per_login"]:
+                n = limits["chats_per_login"]
+                raise HTTPException(429, f"You already have {n} question{'s' if n != 1 else ''} being answered. Wait for one to finish, then ask again.", headers={"retry-after": "10"})
+            if f["total"] >= limits["chats"]:
+                raise HTTPException(429, f"The instance is answering {limits['chats']} questions at once, which is its limit. Wait a moment and ask again.", headers={"retry-after": "10"})
+            f["total"] += 1; f["by_login"][k] = f["by_login"].get(k, 0) + 1
+
+    def _leave_chat(uid: str | None) -> None:
+        f, k = app.state.in_flight, uid or "-"
+        with flight_lock:
+            f["total"] = max(0, f["total"] - 1)
+            left = f["by_login"].get(k, 0) - 1
+            if left > 0:
+                f["by_login"][k] = left
+            else:
+                f["by_login"].pop(k, None)
+
+    @contextmanager
+    def _export_slot():
+        """Held while one set of exports is read. Waits a little for a free slot, then says try again."""
+        if not export_gate.acquire(timeout=limits["export_wait_s"]):
+            raise HTTPException(429, "The instance is reading other people's exports right now. Nothing of yours was kept: give it a minute and try again.", headers={"retry-after": "30"})
+        try:
+            yield
+        finally:
+            export_gate.release()
+
     @app.middleware("http")
     async def headers(request: Request, call_next):
         # no request may carry more than the instance allows: said by its Content-Length, and a body with none is refused
@@ -153,8 +232,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             response.headers.setdefault("strict-transport-security", "max-age=31536000; includeSubDomains")
         return response
 
-    @app.middleware("http")
-    async def guard(request: Request, call_next):
+    def _authorise(request: Request):
+        """Who is asking and may they: the refusal to send, or None. It reads the store, so it runs on a worker thread:
+        a store that is busy for a moment must not hold up everyone else's requests."""
         request.state.user = auth.user_for_token(db, request.cookies.get("session"))
         path = request.url.path
         if path.startswith("/api/") and path not in OPEN_PATHS:
@@ -174,7 +254,13 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 admin_delete = request.method == "DELETE" and request.state.user["role"] == "owner" and path.rstrip("/") == f"/api/estates/{eid}"
                 if scoped and eid is not None and not admin_delete and not access.is_member(db, request.state.user, eid):
                     return JSONResponse({"detail": "nothing here by that id"}, status_code=404)
-        return await call_next(request)
+        return None
+
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        refused = await run_in_threadpool(_authorise, request)
+        return refused if refused is not None else await call_next(request)
 
     def _live_citation_estate(cid: str) -> str | None:
         for s in list(getattr(app.state, "sessions", {}).values()):
@@ -362,16 +448,18 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise HTTPException(409, f"snapshot {sid} could not be read: {type(ex).__name__}: {ex}"[:400])
 
     def forget(eid: str) -> None:
-        for k in [k for k in app.state.workspaces if k[0] == eid]:
-            app.state.workspaces.pop(k, None)
+        with cache_lock:
+            for k in [k for k in app.state.workspaces if k[0] == eid]:
+                app.state.workspaces.pop(k, None)
         act = active_sid(eid)
         if act:
             snaps._forget(act)
 
     def forget_sessions(eid: str) -> None:
         """Every live conversation over the estate is rebuilt from the store on its next message, and re-checked against the active snapshot."""
-        for k in [k for k, s in app.state.sessions.items() if s.w.estate_id == eid]:
-            app.state.sessions.pop(k, None)
+        with cache_lock:
+            for k in [k for k, s in app.state.sessions.items() if s.w.estate_id == eid]:
+                app.state.sessions.pop(k, None)
 
     def workspace(eid: str, sid: str | None = None) -> Workspace:
         """The parsed estate as one snapshot holds it: the active snapshot unless a held conversation names an earlier one.
@@ -383,16 +471,28 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         own = db.one("SELECT estate_id FROM snapshots WHERE id=?", sid)
         if not own or own["estate_id"] != eid:          # a snapshot of another workspace is never read through this one, whatever names it
             raise HTTPException(404, "that snapshot is not part of this workspace")
-        cached = app.state.workspaces.get((eid, sid))
-        if cached is not None:
-            return cached
-        er = run_of(sid)
-        w = Workspace.from_run(er, data / "estates" / eid / ".architect", backend=Bridge(db, eid, sid))
-        w.estate_id, w.snapshot_id = eid, sid
-        lindex.ensure(db, sid, er)               # the line-item index of this snapshot, written the first time it is read
-        app.state.workspaces[(eid, sid)] = w
-        while len(app.state.workspaces) > 8:
-            app.state.workspaces.pop(next(iter(app.state.workspaces)))
+        with cache_lock:
+            cached = app.state.workspaces.get((eid, sid))
+            if cached is not None:
+                return cached
+            mine = building.setdefault((eid, sid), threading.Lock())
+        with mine:                               # one build per workspace: the requests that arrive together wait for it and share it
+            with cache_lock:
+                cached = app.state.workspaces.get((eid, sid))
+            if cached is not None:
+                return cached
+            try:
+                er = run_of(sid)
+                w = Workspace.from_run(er, data / "estates" / eid / ".architect", backend=Bridge(db, eid, sid))
+                w.estate_id, w.snapshot_id = eid, sid
+                lindex.ensure(db, sid, er)               # the line-item index of this snapshot, written the first time it is read
+                with cache_lock:
+                    app.state.workspaces[(eid, sid)] = w
+                    while len(app.state.workspaces) > WORKSPACES_MAX:
+                        app.state.workspaces.pop(next(iter(app.state.workspaces)))
+            finally:
+                with cache_lock:
+                    building.pop((eid, sid), None)
         return w
 
     def _conv_head(c: dict) -> dict:
@@ -451,7 +551,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         if b["provider"] != "none":                      # bedrock, azure, an OpenAI-compatible endpoint: a client of its own per session
             from .provider import client_kw
             return client_kw(b)
-        raise HTTPException(503, "no LLM key: " + b.get("reason", "set ANTHROPIC_API_KEY or run `codex login`"))
+        raise HTTPException(503, "No model is set up on the server: " + b.get("reason", "copy .env.example to .env, fill in one block, and restart"))
 
     def _session_kw(eid: str, c: dict, user: str | None, sid: str) -> dict:
         """What binds a Session to the store: the recorder that keeps every turn, the retriever that finds the
@@ -488,13 +588,14 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def _keep_session(cid: str, s: Session) -> None:
         """The live sessions, most recently used last. Once there are more than SESSIONS_MAX the oldest idle ones go (a
         session in the middle of an answer never does); an evicted conversation is rebuilt from the store on its next message."""
-        app.state.sessions.pop(cid, None)
-        app.state.sessions[cid] = s
-        for k, other in list(app.state.sessions.items()):
-            if len(app.state.sessions) <= SESSIONS_MAX:
-                break
-            if k != cid and not other.lock.locked():
-                app.state.sessions.pop(k, None)
+        with cache_lock:
+            app.state.sessions.pop(cid, None)
+            app.state.sessions[cid] = s
+            for k, other in list(app.state.sessions.items()):
+                if len(app.state.sessions) <= SESSIONS_MAX:
+                    break
+                if k != cid and not other.lock.locked():
+                    app.state.sessions.pop(k, None)
 
     def _bind(eid: str, c: dict, w: Workspace, user: str | None, title: str) -> Session:
         s = Session(w, title=title[:80], **_session_kw(eid, c, user, w.snapshot_id), **_client_kw())
@@ -536,6 +637,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         s = app.state.sessions.get(cid)
         if s is not None:
             s.user = user or s.user
+            _meter(s, user)                      # the login asking now: its cap, its ledger, whoever opened the chat
             _keep_session(cid, s)
             return s
         try:
@@ -550,13 +652,14 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         held = c["snapshot_id"] if st and st["can_continue"] else None
         w = workspace(eid, held)
         s = Session.resume_turns(w, c["turns"], title=c["title"], **_session_kw(eid, c, user, w.snapshot_id), **_client_kw())
+        _meter(s, user)                          # a chat rebuilt from the store is metered like a new one
         _keep_session(cid, s)
         return s
 
-    async def _stage_upload(sid: str, mid: str, kind: str, up: UploadFile | None) -> dict | None:
+    def _stage_upload(sid: str, mid: str, kind: str, up: UploadFile | None) -> dict | None:
         if not up or not up.filename:
             return None
-        body = await up.read()
+        body = up.file.read()
         if not body:
             return None
         try:
@@ -564,7 +667,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except ValueError as ex:
             raise HTTPException(400, str(ex))
 
-    async def _stage_rows(sid: str, eid: str, model_ids: list[str], model_names: list[str], line_items: list[UploadFile],
+    def _stage_rows(sid: str, eid: str, model_ids: list[str], model_names: list[str], line_items: list[UploadFile],
                           actions: list[UploadFile], modules: list[UploadFile], zip_file: UploadFile | None) -> list[dict]:
         """Rows are aligned by index: model_ids[i] (or a new model named model_names[i]) gets line_items[i], actions[i], modules[i]."""
         staged = []
@@ -590,7 +693,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 if not m or m["estate_id"] != eid:
                     raise HTTPException(400, f"row {i + 1}: that model is not in this estate")
             for kind, lst in (("line_items", line_items), ("actions", actions), ("modules", modules)):
-                r = await _stage_upload(sid, mid, kind, lst[i] if i < len(lst) else None)
+                r = _stage_upload(sid, mid, kind, lst[i] if i < len(lst) else None)
                 if r:
                     staged.append(r)
         if zip_file and zip_file.filename:
@@ -598,7 +701,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 p = Path(td) / "estate.zip"
                 with open(p, "wb") as out:
                     while True:
-                        chunk = await zip_file.read(1 << 18)
+                        chunk = zip_file.file.read(1 << 18)
                         if not chunk:
                             break
                         out.write(chunk)
@@ -660,11 +763,16 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return out
 
     @app.post("/api/estates")
-    async def create_estate_with_files(request: Request, name: str = Form(""), model_names: list[str] = Form(...), line_items: list[UploadFile] = File(...),
+    def create_estate_with_files(request: Request, name: str = Form(""), model_names: list[str] = Form(...), line_items: list[UploadFile] = File(...),
                                        actions: list[UploadFile] = File(default=[]), modules: list[UploadFile] = File(default=[]), aliases: str = Form("")):
-        """One request: register the models, stage their files, parse, activate. A bad export leaves nothing behind."""
+        """One request: register the models, stage their files, parse, activate. A bad export leaves nothing behind.
+        A plain function, on a worker thread: reading exports takes seconds and nobody else may wait for it."""
         if len(model_names) != len(line_items):
             raise HTTPException(400, "one Line Items file per model name")
+        with _export_slot():
+            return _create_estate(request, name, model_names, line_items, actions, modules, aliases)
+
+    def _create_estate(request: Request, name: str, model_names: list[str], line_items: list, actions: list, modules: list, aliases: str):
         al = _aliases(aliases)
         by = who(request)
         e = reg.create_estate(db, ws_id, name.strip() or f"Estate of {len(model_names)}", created_by=by)
@@ -677,10 +785,10 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 if not mn or re.fullmatch(r"(?i)(line[\s_-]*items?|modules?|actions?)(\.csv)?", mn):      # a name taken from the export file, not the model
                     mn = f"Model {i + 1}"
                 m = reg.find_model(db, e["id"], mn) or reg.add_model(db, e["id"], mn, aliases=[a for a, t in al.items() if reg.safe_name(t) == mn], created_by=by)
-                await _stage_upload(snap["id"], m["id"], "line_items", li)
+                _stage_upload(snap["id"], m["id"], "line_items", li)
                 for kind, lst in (("actions", actions), ("modules", modules)):
                     if i < len(lst):
-                        await _stage_upload(snap["id"], m["id"], kind, lst[i])
+                        _stage_upload(snap["id"], m["id"], kind, lst[i])
             why = snaps.ready(snap["id"])
             if why:
                 raise ValueError("; ".join(why))
@@ -739,10 +847,10 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return {"deleted": eid, "blobs_removed": blobs.gc()}
 
     # ---------- backup and restore (stage 5) ----------
-    async def _save_upload(up: UploadFile, dest: Path) -> None:
+    def _save_upload(up: UploadFile, dest: Path) -> None:
         with open(dest, "wb") as out:
             while True:
-                chunk = await up.read(1 << 18)
+                chunk = up.file.read(1 << 18)
                 if not chunk:
                     break
                 out.write(chunk)
@@ -762,11 +870,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return FileResponse(str(path), media_type="application/zip", filename=fname, background=BackgroundTask(shutil.rmtree, td, True))
 
     @app.post("/api/estates/restore/inspect")
-    async def inspect_backup(request: Request, file: UploadFile = File(...)):
+    def inspect_backup(request: Request, file: UploadFile = File(...)):
         """What a backup holds, before it is restored: name, models, counts, when it was taken, and whether its id is already here."""
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "backup.zip"
-            await _save_upload(file, p)
+            _save_upload(file, p)
             try:
                 m = backupmod.inspect_archive(p)
             except ValueError as ex:
@@ -779,20 +887,24 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return m
 
     @app.post("/api/estates/restore")
-    async def restore_backup(request: Request, file: UploadFile = File(...), name: str = Form("")):
+    def restore_backup(request: Request, file: UploadFile = File(...), name: str = Form("")):
         """Restore a backup under its original ids, so every old citation still opens. Refuses an estate already in the store."""
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "backup.zip"
-            await _save_upload(file, p)
+            _save_upload(file, p)
             try:
-                r = backupmod.import_estate(db, blobs, data, p, ws_id, by=who(request), name=name)
+                with blobs.lock:                      # its files and the rows that refer to them go in together (see BlobStore)
+                    r = backupmod.import_estate(db, blobs, data, p, ws_id, by=who(request), name=name)
             except ValueError as ex:
                 raise HTTPException(409 if "already in this store" in str(ex) else 400, str(ex))
         if who(request):
             access.add_member(db, r["id"], who(request))
         if r.get("active_snapshot"):                  # the archive carries no parse cache: read the exports now, so the page opens on a whole estate
             try:
-                snaps.estate_run(r["active_snapshot"], block=True)
+                with _export_slot():
+                    snaps.estate_run(r["active_snapshot"], block=True)
+            except HTTPException:
+                raise HTTPException(429, "Restored. The instance is reading other people's exports right now, so this workspace's are not read yet: open it in a minute.", headers={"retry-after": "30"})
             except Exception as ex:
                 raise HTTPException(409, f"restored, but its exports could not be read: {type(ex).__name__}: {ex}"[:400])
         return summary(r["id"]) | {"restore": r}
@@ -863,14 +975,15 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return snaps.list(eid)
 
     @app.post("/api/estates/{eid}/snapshots")
-    async def create_snapshot(request: Request, eid: str, label: str = Form(""), note: str = Form(""), fresh: bool = Form(False),
+    def create_snapshot(request: Request, eid: str, label: str = Form(""), note: str = Form(""), fresh: bool = Form(False),
                               model_ids: list[str] = Form(default=[]), model_names: list[str] = Form(default=[]),
                               line_items: list[UploadFile] = File(default=[]), actions: list[UploadFile] = File(default=[]),
                               modules: list[UploadFile] = File(default=[]), zip: UploadFile | None = File(default=None)):
         """A draft snapshot: the active snapshot's files (unless fresh) plus whatever is uploaded here."""
         estate(eid)
-        snap = snaps.create(eid, label=label, note=note, inherit=not fresh, created_by=who(request))
-        await _stage_rows(snap["id"], eid, model_ids, model_names, line_items, actions, modules, zip)
+        with _export_slot():                         # the files pass through memory on their way in: a few uploads at a time
+            snap = snaps.create(eid, label=label, note=note, inherit=not fresh, created_by=who(request))
+            _stage_rows(snap["id"], eid, model_ids, model_names, line_items, actions, modules, zip)
         return snapshot(snap["id"])
 
     @app.get("/api/snapshots/{sid}")
@@ -880,11 +993,12 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return s
 
     @app.post("/api/snapshots/{sid}/files")
-    async def add_files(sid: str, model_ids: list[str] = Form(default=[]), model_names: list[str] = Form(default=[]),
+    def add_files(sid: str, model_ids: list[str] = Form(default=[]), model_names: list[str] = Form(default=[]),
                         line_items: list[UploadFile] = File(default=[]), actions: list[UploadFile] = File(default=[]),
                         modules: list[UploadFile] = File(default=[]), zip: UploadFile | None = File(default=None)):
         s = snapshot(sid)
-        await _stage_rows(sid, s["estate_id"], model_ids, model_names, line_items, actions, modules, zip)
+        with _export_slot():
+            _stage_rows(sid, s["estate_id"], model_ids, model_names, line_items, actions, modules, zip)
         return snapshot(sid)
 
     @app.delete("/api/snapshots/{sid}/files/{mid}")
@@ -1350,13 +1464,19 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         if not sess.lock.acquire(blocking=False):
             raise HTTPException(409, BUSY)
         try:
+            _enter_chat(user)
+        except HTTPException:
+            sess.lock.release()
+            raise
+        try:
             sess.trace_level = _trace_level_of(user)      # read now, for this turn: a change in Settings applies from the next question
             sess.ask(text, mode)
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(502, f"the model call failed: {e}")
+            raise HTTPException(*model_error(e))
         finally:
+            _leave_chat(user)
             sess.lock.release()
         return sess.turns[-1]
 
@@ -1370,8 +1490,14 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         mode = _mode(request, body)
         if not sess.lock.acquire(blocking=False):
             raise HTTPException(409, BUSY)
+        uid = who(request)
+        try:
+            _enter_chat(uid)
+        except HTTPException:
+            sess.lock.release()
+            raise
 
-        level = _trace_level_of(who(request))
+        level = _trace_level_of(uid)
 
         def gen():
             try:
@@ -1381,8 +1507,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                         continue                      # the start event; the full one follows with args
                     yield "data: " + json.dumps(ev, ensure_ascii=False, default=str) + "\n\n"
             except Exception as e:
-                yield "data: " + json.dumps({"type": "error", "message": f"the model call failed: {e}"}) + "\n\n"
+                yield "data: " + json.dumps({"type": "error", "message": model_error(e)[1]}) + "\n\n"
             finally:
+                _leave_chat(uid)
                 sess.lock.release()                   # whichever thread finishes the stream, or closes it early
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
 

@@ -1,6 +1,7 @@
 """One SQLite file for everything the architect keeps, blobs aside.
 
-WAL so two writers do not block each other for long; foreign keys on; numbered
+WAL so readers never wait for a writer and two writers do not block each other for long (a second writer waits up to
+30 seconds for the first, then fails); synchronous=NORMAL; foreign keys on; numbered
 migrations in ./migrations applied at startup with the version kept in
 PRAGMA user_version. Connections are per thread (the parse job runs in one).
 """
@@ -39,6 +40,7 @@ class Db:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA foreign_keys=ON")
             c.execute("PRAGMA busy_timeout=30000")
+            c.execute("PRAGMA synchronous=NORMAL")      # with WAL: a commit does not wait for the disk, and a crash loses at most the last moments, never the file
             self._local.conn = c
         return c
 

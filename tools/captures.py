@@ -7,7 +7,8 @@ Caldergate demo workspaces, with a manifest. One command regenerates all of it.
 
   out/captures/stills/<feature>-<shot>-desktop.png     1600 x 1000
   out/captures/stills/<feature>-<shot>-4x5.png         1080 x 1350, framed so a 4:5 crop loses nothing
-  out/captures/clips/<moment>.webm                     1280 x 720, VP9, no audio (needs ffmpeg on the path)
+  out/captures/clips/<moment>.mp4                      1280 x 720, H.264 (High, yuv420p, faststart), no audio (needs ffmpeg on the path)
+  out/captures/clips/<moment>.webm                     the same clip as VP9; each file is played in the browser before it is listed
   out/captures/manifest.json                           file, kind, feature, the question asked, viewport, and what was done
 
 Run it against a store made for it (a login called admin, demo logins, nothing else): every frame is then free of
@@ -35,6 +36,35 @@ DOCS = {"hero": "why-answer-desktop", "why": "why-passage-desktop", "plan": "pla
         "context": "context-view-desktop", "run": "run-timeline-desktop", "documents": "documents-cards-desktop", "dashboard": "dashboard-top-desktop",
         "model-map": "dashboard-model-map-desktop", "switcher": "workspace-switcher-desktop", "admin": "admin-panel-desktop", "tracing": "tracing-setting-desktop",
         "sign-in": "sign-in-page-desktop", "bert": "bert-thinking-desktop", "not-recorded": "not-recorded-answer-desktop"}
+
+
+# The screencast's frames are JPEGs, which are full-range colour. Carried into the video as they are, Chrome refuses to decode
+# it (the first frame shows, then PIPELINE_ERROR_DECODE), so every encode converts to limited range and says so in the file.
+RANGE = "scale={w}:{h}:flags=lanczos:in_range=pc:out_range=tv,format=yuv420p"
+COLOUR = ["-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+ENCODES = {".mp4": ["-c:v", "libx264", "-profile:v", "high", "-level", "4.0", "-preset", "slow", "-crf", "23", "-g", "50", "-movflags", "+faststart"],
+           ".webm": ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "33", "-row-mt", "1", "-g", "50"]}
+PLAYS = """async () => { const v = document.querySelector('video');
+  try { await v.play() } catch (e) { return { t: 0, err: String(e) } }
+  await new Promise(r => setTimeout(r, 2500));
+  return { t: v.currentTime, err: v.error && v.error.message, frames: v.getVideoPlaybackQuality().totalVideoFrames } }"""
+
+
+def plays(browser, folder: pathlib.Path, names: list[str]) -> dict[str, str]:
+    """Load each file in a video element in the real browser, press play, and see the time move. name -> '' or what went wrong."""
+    import functools, http.server, threading
+    quiet = type("Quiet", (http.server.SimpleHTTPRequestHandler,), {"log_message": lambda *a: None})
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(folder)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    out, page = {}, browser.new_page()
+    try:
+        for name in names:
+            page.set_content(f"<video muted playsinline src='http://127.0.0.1:{srv.server_address[1]}/{name}'></video>")
+            r = page.evaluate(PLAYS)
+            out[name] = "" if r["t"] >= 1.0 and not r["err"] and r["frames"] > 10 else f"did not play in the browser (time {r['t']:.2f}s, {r['err'] or 'no error'})"
+    finally:
+        page.close(); srv.shutdown()
+    return out
 
 
 # run in the page: remove what this tool itself adds to the demo workspace (a held upload's file name, the live question's chat)
@@ -240,7 +270,8 @@ def main() -> int:
         # ---- clips: one context each, recorded from the first frame to the last ----
         def clip(name, feature, question, steps, note=""):
             """One clip: the browser's own screencast (a frame whenever the page changes, with its time), encoded with the
-            ffmpeg on this machine into a VP9 webm at 25 frames a second. No audio."""
+            ffmpeg on this machine at 25 frames a second into an H.264 mp4 and a VP9 webm, both limited-range. No audio.
+            Each file is then played in the browser; one whose time does not move is deleted and reported, not listed."""
             import base64, subprocess
             tmp = clips / ("_" + name); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
             ctx = context(*CLIP)
@@ -271,13 +302,20 @@ def main() -> int:
                 lines += [f"file 'f{i:05d}.jpg'", f"duration {max((frames[i + 1][0] - ts) if i + 1 < len(frames) else 1.2, 0.02):.3f}"]
             lines.append(f"file 'f{len(frames) - 1:05d}.jpg'")
             (tmp / "list.txt").write_text(chr(10).join(lines), encoding="utf-8")
-            r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "list.txt", "-vf", f"fps=25,scale={CLIP[0]}:{CLIP[1]}:flags=lanczos",
-                                "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "33", "-an", str((clips / f"{name}.webm").resolve())], cwd=tmp, capture_output=True, text=True)
+            secs, made = round(frames[-1][0] - frames[0][0] + 1.2, 1), []
+            for ext, codec in ENCODES.items():
+                r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "list.txt", "-vf", "fps=25," + RANGE.format(w=CLIP[0], h=CLIP[1]),
+                                    *codec, *COLOUR, "-an", str((clips / f"{name}{ext}").resolve())], cwd=tmp, capture_output=True, text=True)
+                if r.returncode != 0:
+                    missed.append(f"clips/{name}{ext}: ffmpeg: {r.stderr.strip()[:140]}")
+                else:
+                    made.append(f"{name}{ext}")
             shutil.rmtree(tmp, ignore_errors=True)
-            if r.returncode != 0:
-                missed.append(f"clips/{name}.webm: ffmpeg: {r.stderr.strip()[:140]}"); return
-            secs = round(frames[-1][0] - frames[0][0] + 1.2, 1)
-            manifest.append({"file": f"clips/{name}.webm", "kind": "clip", "feature": feature, "shot": name, "question": question, "viewport": f"{CLIP[0]}x{CLIP[1]}", "seconds": secs, "note": note})
+            for file, wrong in plays(browser, clips, made).items():
+                if wrong:
+                    missed.append(f"clips/{file}: {wrong}"); (clips / file).unlink(missing_ok=True); continue
+                manifest.append({"file": f"clips/{file}", "kind": "clip", "feature": feature, "shot": name, "question": question, "viewport": f"{CLIP[0]}x{CLIP[1]}", "seconds": secs,
+                                 "codec": "h264" if file.endswith(".mp4") else "vp9", "plays": True, "note": note})
 
         def open_(page, where, pause=1500):
             page.goto(f"{a.base}/app/?capture=1#/{where}", wait_until="networkidle"); page.wait_for_selector(".ds-main", timeout=20000); page.wait_for_timeout(pause)

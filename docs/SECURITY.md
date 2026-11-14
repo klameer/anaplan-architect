@@ -207,8 +207,10 @@ everything else with `constraints.txt`. The base image (`python:3.12-slim`) is a
 5. A known username can be locked out by someone failing on purpose.
 6. A quoted word or two, or a single-quoted or italic phrase, that is not in the section word for word is shown as
    not checked: it is neither verified nor flagged.
-7. The Docker image has never been built or run: it is written and its install steps were followed by hand in a
-   clean environment. `constraints.txt` was taken from a Windows install and has not been resolved on Linux.
+7. The Docker image was built and run on 2026-11-14 from the public repository: on one machine (healthy, both demo
+   workspaces, non-root) and in hosted mode with a volume (sign-in, Secure cookies, the security headers, 401 when
+   signed out, logins and sessions kept across a restart). The build installs with `constraints.txt` on Linux. Not yet
+   tried: `docker compose up` itself, and a question with a real model key inside the container.
 8. Not looked at by either review: `codex.py`, `openai_compat.py`, `cli.py`. The builder read them for shell calls,
    disabled certificate checks and secrets in messages, found one (a token service's reply repeated in an error) and
    fixed it. That is a read by the author, not a review.
@@ -229,5 +231,6 @@ that stay, not work in progress:
 6. **Hostile-PDF coverage.** Six malformed files are tested; a PDF built to exhaust the parser has not been tried.
 7. **`codex.py`, `openai_compat.py`, `cli.py`.** Read by their author only, not reviewed.
 
-**Still open, not accepted:** the Docker image has never been built or run. Building it and passing the demo script in
-it is a step before any Railway deploy.
+**Still open, not accepted:** the Docker image is built and run, but no question has been asked with a real model key
+inside it and `docker compose up` itself has not been tried. Passing the demo script in the container is a step before
+any Railway deploy.

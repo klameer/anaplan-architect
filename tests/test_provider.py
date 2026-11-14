@@ -18,7 +18,7 @@ def _clean(monkeypatch):
 
 
 def test_one_setting_picks_the_provider(monkeypatch):
-    assert provider.resolve()["provider"] == "none" and "ANTHROPIC_API_KEY" in provider.resolve()["reason"]
+    assert provider.resolve()["provider"] == "none" and ".env.example" in provider.resolve()["reason"]
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     r = provider.resolve()
     assert (r["provider"], r["model"], r["endpoint"], provider.client_kw(r)) == ("anthropic", "claude-sonnet-5", "api.anthropic.com", {"api_key": "k"})

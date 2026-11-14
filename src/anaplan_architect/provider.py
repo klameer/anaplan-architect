@@ -78,7 +78,7 @@ def resolve(api_key: str | None = None, model_id: str | None = None) -> dict:
         effort = env("CODEX_REASONING") or "medium"
         return {"provider": "codex", "model": cmodel, "client_kw": {"client": codexmod.CodexClient(model=cmodel, reasoning_effort=effort)}, "endpoint": "chatgpt.com (Codex subscription)"}
     reason = {"anthropic": "set ANTHROPIC_API_KEY (or --api-key)", "codex": f"run `codex login` (no {codexmod.auth_path()})"}.get(
-        want, "set ANTHROPIC_API_KEY; or ARCHITECT_PROVIDER=openai with OPENAI_BASE_URL and ARCHITECT_MODEL; or run `codex login` and set ARCHITECT_PROVIDER=codex")
+        want, "no model is set up: copy .env.example to .env and fill in one block (anthropic, openai, azure, bedrock or codex), then restart")
     return _none(reason)
 
 

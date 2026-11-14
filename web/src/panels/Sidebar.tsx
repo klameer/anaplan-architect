@@ -23,7 +23,7 @@ export function Sidebar() {
   function newChat() {
     if (!eid || !summary) { toast('Pick an estate first.'); return }
     if (!summary.snapshot) { toast('Activate a snapshot first.'); return }
-    if (!summary.llm) { toast('No LLM key on the server. Start it with --api-key or set ANTHROPIC_API_KEY.'); return }
+    if (!summary.llm) { toast('No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.'); return }
     go(href(eid, 'chat', 'new'))
   }
   async function del(id: string, title: string) {
@@ -72,7 +72,7 @@ export function Sidebar() {
         <span className="avatar">{(me?.user?.name || 'L').slice(0, 1).toUpperCase()}</span>
         <div className="grow">
           <div className="t">{me?.user ? me.user.name : 'Local'}</div>
-          <div className="s">{me?.user ? me.user.role : 'no accounts · localhost'}{summary ? ` · ${summary.llm ? summary.provider : 'no LLM key'}` : ''}</div>
+          <div className="s">{me?.user ? me.user.role : 'no accounts · localhost'}{summary ? ` · ${summary.llm ? summary.provider : 'no model set up'}` : ''}</div>
         </div>
         {me?.user && <button className="quiet small" onClick={signOut} title="Sign out">↪</button>}
       </div>

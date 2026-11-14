@@ -19,7 +19,7 @@ export function WorkspacePage() {
   async function ask(text: string) {
     if (!text.trim()) return
     if (!s!.snapshot) { toast('Upload the exports and activate them first.'); return }
-    if (!s!.llm) { toast('No model key on the server: set one in .env and restart.'); return }
+    if (!s!.llm) { toast('No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.'); return }
     try {
       const c = await api('/api/estates/' + eid + '/conversations', json('POST', { title: text }))
       sessionStorage.setItem('ask:' + c.id, text)

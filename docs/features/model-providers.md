@@ -7,7 +7,8 @@ or care which it is, and Settings shows where your questions go so nobody has to
 
 ## How to use it
 
-In `.env` (copy `.env.example`):
+Copy `.env.example` to `.env` and fill in one block; the file has one per provider. `.env` is gitignored and stays
+on the machine. Docker reads the same file; on a server, set the same names as service variables.
 
 | `ARCHITECT_PROVIDER` | Needs |
 |---|---|

@@ -6,7 +6,8 @@ environment is never overwritten:
   <repo>/.env                  next to pyproject.toml, two levels above this package
   ~/.anaplan-architect.env     the user's home
 
-Lines are KEY=value; quotes around the value are stripped; # starts a comment.
+Lines are KEY=value; quotes around the value are stripped; # starts a comment, on its own line or after an unquoted
+value and a space (so a line uncommented from .env.example keeps its trailing note out of the value).
 """
 from __future__ import annotations
 import os
@@ -32,6 +33,12 @@ def load(paths: list[Path] | None = None) -> list[str]:
             k = k.strip(); v = v.strip()
             if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
                 v = v[1:-1]
+            elif v.startswith("#"):
+                v = ""
+            else:
+                for mark in (" #", "\t#"):
+                    if mark in v:
+                        v = v.split(mark, 1)[0].rstrip()
             if k and k not in os.environ:
                 os.environ[k] = v; set_keys.append(k)
     return set_keys

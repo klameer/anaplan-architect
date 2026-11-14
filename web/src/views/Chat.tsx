@@ -201,7 +201,7 @@ function NewChat({ eid, mode, pickMode }: { eid: string; mode: 'full' | 'concise
       <div className="k" style={{ marginBottom: 10 }}>{models.length} model{models.length !== 1 ? 's' : ''} · {li.toLocaleString()} line items · {summary?.documents ?? 0} document{summary?.documents !== 1 ? 's' : ''}{summary?.snapshot ? ` · read ${summary.snapshot.activated_at?.slice(0, 10)}` : ''}</div>
       <h1>Ask about {summary?.name}</h1>
       <div className="sub">{ready ? 'Every answer cites the objects and passages it rests on. What is not recorded is said, not guessed.'
-        : !summary?.snapshot ? 'Upload the exports on the Workspace page and activate them before asking.' : 'No model key on the server: set one in .env and restart.'}</div>
+        : !summary?.snapshot ? 'Upload the exports on the Workspace page and activate them before asking.' : 'No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.'}</div>
       <div className="ds-compose"><div className="box">
         <textarea ref={ta} autoFocus value={draft} onChange={e => setDraft(e.target.value)} placeholder={ready ? 'Ask why, ask for a plan, ask what a change touches…' : 'Nothing to ask yet.'} disabled={busy || !ready} rows={2}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); start() } }} />

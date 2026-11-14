@@ -26,7 +26,7 @@ export function Home() {
 
   async function start(text: string) {
     if (!s!.snapshot) { toast('Activate a snapshot first.'); return }
-    if (!s!.llm) { toast('No LLM key on the server. Start it with --api-key or set ANTHROPIC_API_KEY.'); return }
+    if (!s!.llm) { toast('No model is set up on the server. Copy .env.example to .env, fill in one block, and restart.'); return }
     try {
       const c = await api('/api/estates/' + eid + '/conversations', json('POST', { title: text }))
       sessionStorage.setItem('ask:' + c.id, text)

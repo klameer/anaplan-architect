@@ -156,7 +156,7 @@ def test_no_key_is_a_clear_error(tmp_path, monkeypatch):
     c = TestClient(create_app(tmp_path / "data"))
     eid = _upload(c).json()["id"]
     r = c.post(f"/api/estates/{eid}/conversations", json={"text": "hi"})
-    assert r.status_code == 503 and "no LLM key" in r.json()["detail"]
+    assert r.status_code == 503 and "No model is set up" in r.json()["detail"] and ".env.example" in r.json()["detail"]
 
 
 def test_model_register_and_snapshot_flow(tmp_path):
