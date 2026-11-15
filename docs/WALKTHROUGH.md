@@ -231,9 +231,17 @@ port 8766: set `ARCHITECT_ADMIN_USER=admin` and `ARCHITECT_ADMIN_PASSWORD` to a 
 - **Also there**: Reset the demo; what is stored here and what is sent to the model, with the provider and endpoint;
   tracing; About, "Built by CodelessOps".
 
-## 16. Notes, Dependencies, Improve
+## 16. Notes, Improve, and what a change touches
 
-These three pages are as in v0.1, inside the new shell. Not restyled.
+Notes and Improve are as in v0.1, inside the new shell. Not restyled.
+
+The dependency explorer is no longer on the menu (2026-11-15): nobody starts there. It is reached from three places.
+
+- **Where**: the Workspace page, the panel "What a change would touch most" (under Inside a model); or "Explore it
+  link by link" under the diagram of an implications answer; or "Explore its dependencies" in the drawer of any object.
+- **See**: the page "What does a change touch?" opened on that one line item: the tiles, the modules in reach, the
+  reached line items, actions and other models, then the graph. Workspace stays lit in the menu.
+- **Do**: "Browse every line item and module" brings the search back, with columns Reads and Read by.
 
 ## 17. Sign in
 

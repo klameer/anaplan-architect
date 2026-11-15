@@ -3,7 +3,7 @@
 // on and its longest formulas; then what the modules are for. Everything is read off the parse (the line-item index and
 // the exports). A panel whose export column is missing says so. Every panel can ask the chat about itself.
 import React, { useEffect, useState } from 'react'
-import { api, fmtC, type Summary, type TestsDetail } from '../api'
+import { api, fmtC, type DepSearch, type Summary, type TestsDetail } from '../api'
 import { FeedDiagram, Treemap } from './diagrams'
 
 type Profile = { model: string; modules: { name: string; area: string; line_items: number }[]; has_areas: boolean; edges: [string, string, number][]
@@ -61,6 +61,7 @@ export function Dashboard({ s, onAsk, bare }: { s: Summary; onAsk?: (q: string) 
   const [ps, setPs] = useState<Record<string, Profile>>({})
   const [tests, setTests] = useState<TestsDetail | null>(null)
   const [pick0, setPick] = useState('')
+  const [hubs, setHubs] = useState<DepSearch | null>(null)
   const pick = pick0 || s.models.slice().sort((a, b) => (b.cells || 0) - (a.cells || 0))[0]?.name || ''
   useEffect(() => {
     let off = false
@@ -69,6 +70,13 @@ export function Dashboard({ s, onAsk, bare }: { s: Summary; onAsk?: (q: string) 
     api<TestsDetail>('/api/estates/' + s.id + '/tests').then(t => { if (!off) setTests(t) }).catch(() => {})
     return () => { off = true }
   }, [s.id, s.snapshot?.id])
+  // the most widely read line items of the picked model: the way into the dependency explorer, which is not on the menu
+  useEffect(() => {
+    if (!pick || !s.snapshot) { setHubs(null); return }
+    let off = false; setHubs(null)
+    api<DepSearch>(`/api/estates/${s.id}/deps/search?` + new URLSearchParams({ q: '', limit: '6', model: pick, kind: 'line_item' }).toString()).then(r => { if (!off) setHubs(r) }).catch(() => {})
+    return () => { off = true }
+  }, [s.id, s.snapshot?.id, pick])
   const li = s.models.reduce((a, m) => a + (m.line_items || 0), 0), cells = s.models.reduce((a, m) => a + (m.cells || 0), 0), nm = s.models.reduce((a, m) => a + (m.modules || 0), 0)
   const em = s.models.find(m => m.name === pick), eff = (em?.effort_by_module || []).slice(0, 7), emax = Math.max(0.001, ...eff.map(e => e[1]))
   const p = ps[pick], fmax = Math.max(1, ...(p?.functions || []).map(f => f.n))
@@ -106,6 +114,13 @@ export function Dashboard({ s, onAsk, bare }: { s: Summary; onAsk?: (q: string) 
           {!p ? <div className="dim">Reading…</div> : <table><tbody>{p.longest.map(r => { const i = r.ref.indexOf('.'); return <tr key={r.ref}><td><span className="ds-chip li"><s>{r.ref.slice(0, i)}</s><em>.</em>{r.ref.slice(i + 1)}</span></td><td className="num">{r.formula_len.toLocaleString()} · {r.ifs} · {r.depth}</td></tr> })}</tbody></table>}</Panel>
       </div>
     </div>
+    <div style={{ height: 14 }} />
+    <Panel k="What a change would touch most" note="line items read by the most others" ask={`which line items in ${pick} would be riskiest to change, and why?`} cap="Read by: how many line items use it in a formula, directly. Open one to see everything a change to it reaches, step by step.">
+      {!hubs ? <div className="dim">Reading the index…</div> : !hubs.hits.filter(h => h.used_by > 0).length ? <div className="dim">No line item in this model is read by another.</div>
+        : <table className="ds-hubs"><thead><tr><th>Line item</th><th className="num">Read by</th><th /></tr></thead>
+          <tbody>{hubs.hits.filter(h => h.used_by > 0).map(h => { const i = h.ref.indexOf('.'); return <tr key={h.ref}><td><span className="ds-chip li"><s>{h.ref.slice(0, i)}</s><em>.</em>{h.ref.slice(i + 1)}</span></td>
+            <td className="num barcell" style={{ width: '30%' }}>{h.used_by} line item{h.used_by !== 1 ? 's' : ''}<i style={{ width: 100 * h.used_by / Math.max(1, hubs.hits[0].used_by) + '%', background: '#38bdf8' }} /></td>
+            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}><a className="ds-tag" href={`#/e/${s.id}/dependencies/${encodeURIComponent(h.model)}/${encodeURIComponent(h.ref)}`}>what it touches →</a></td></tr> })}</tbody></table>}</Panel>
     <div style={{ height: 14 }} />
     <Panel k="What the modules are for" note="from the Functional Area column" ask="which modules are inputs and which are outputs?" cap="Read off the Modules export. A module with no functional area is shown as not stated, never guessed from its name.">
       <Roles ps={ps} models={s.models.map(m => m.name)} /></Panel>

@@ -4,7 +4,7 @@
 // the action plan), never from the model's own words. Concise shows the lead and the figures only; the rest opens in place.
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtC, fmtN, fmtUsd, type Plan, type PlanCard, type Reach, type Turn } from '../api'
-import { useApp } from '../App'
+import { depsHref, useApp } from '../App'
 import { Markdown, Obj, buildCites } from '../objects'
 import { FeedDiagram, ReachRings, ReachSteps, Treemap } from '../design/diagrams'
 import { PlanBlock } from './PlanBlock'
@@ -71,7 +71,7 @@ function ReachBlock({ eid, b, full, figure }: { eid: string; b: any; full: boole
     <div className="ds-tiles"><div><div className="v">{c.line_items}</div><div className="l">line items · {c.direct} direct</div></div><div><div className="v">{c.modules}</div><div className="l">modules</div></div><div><div className="v">{fmtC(c.footprint_cells)}</div><div className="l">cells in reach</div></div><div><div className="v">{c.actions ?? '—'}</div><div className="l">actions touch it</div></div><div><div className="v">{c.models_inferred}</div><div className="l">other models, inferred</div></div></div>
     {figure && c.line_items > 0 && <div className="ds-fig"><div className="fh"><span className="k">Reach · {r.direction}</span><div className="ds-seg" role="group" aria-label="Diagram"><button className={view === 'rings' ? 'on' : ''} onClick={() => setView('rings')}>Rings</button><button className={view === 'steps' ? 'on' : ''} onClick={() => setView('steps')}>Steps</button></div><span className="grow" /><div className="ds-leg"><span><u style={{ background: 'var(--sky)', borderRadius: 5 }} />a line item</span></div></div>
       <div className="fb">{view === 'rings' ? <ReachRings r={r} /> : <ReachSteps r={r} />}</div>
-      <div className="cap">{view === 'rings' ? 'The change at the centre. Each ring is one more formula away; each sector is a module.' : 'A row per module, a column per step away; the number is how many line items sit there.'} Reach follows formula references: it does not prove a value will change.</div></div>}
+      <div className="cap">{view === 'rings' ? 'The change at the centre. Each ring is one more formula away; each sector is a module.' : 'A row per module, a column per step away; the number is how many line items sit there.'} Reach follows formula references: it does not prove a value will change. <a href={depsHref(eid, b.model, b.ref)} style={{ color: 'var(--accent)' }}>Explore it link by link →</a></div></div>}
     {full && <><div className="ds-two">
       <div><Sec k="By module" ct={String(r.modules.length)} />
         <table><thead><tr><th>Module</th><th className="num">Line items</th><th className="num">From step</th><th className="num">Cells</th></tr></thead>

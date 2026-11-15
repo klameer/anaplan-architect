@@ -6,7 +6,6 @@ const NAV: [View, string, string][] = [
   ['home', 'Home', 'M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'],
   ['chats', 'Chats', 'M4 5h16v11H8l-4 4z'],
   ['notes', 'Notes', 'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6'],
-  ['dependencies', 'Dependencies', 'M5 6h4v4H5zM15 14h4v4h-4zM9 8h4M13 8v8h2'],
   ['plan', 'Action plan', 'M5 6h14M5 12h14M5 18h9M4 6l1 1 2-2'],
   ['size', 'Size', 'M4 20V4M4 20h16M7 16l4-5 3 3 6-8'],
 ]

@@ -1,5 +1,6 @@
 // The v0.2 shell (docs/DESIGN.md): a sidebar led by the workspace dropdown, with that workspace's pages under it
-// (Workspace, Chats, Documents, Dependencies, Improve, Notes), its chats, and the login with Settings. A workspace is
+// (Workspace, Chats, Documents, Improve, Notes), its chats, and the login with Settings. The dependency explorer is not
+// on the menu (Karim, 2026-11-15: nobody starts there): it is reached from an object, a reach answer or the dashboard. A workspace is
 // an isolated unit: everything listed here belongs to the one selected. Branding: /architect by CodelessOps.
 import { DeleteWorkspace, type Doomed } from '../views/DeleteWorkspace'
 import React, { useEffect, useRef, useState } from 'react'
@@ -12,7 +13,6 @@ const NAV: [View, string, string][] = [
   ['home', 'Workspace', 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z'],
   ['chats', 'Chats', 'M4 5h16v11H8l-4 4z'],
   ['documents', 'Documents', 'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h4'],
-  ['dependencies', 'Dependencies', 'M5 6h4v4H5zM15 14h4v4h-4zM9 8h4M13 8v8h2'],
   ['plan', 'Improve', 'M4 18l5-6 4 3 7-9M15 6h5v5'],
   ['notes', 'Notes', 'M5 4h14v12l-4 4H5zM15 20v-4h4'],
 ]
@@ -72,7 +72,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <a className="add" href="#/new">+ New workspace</a>
             <div className="iso">A workspace is separate: its chats, documents, notes and dependencies stay in it. Nothing is remembered across workspaces.</div></div>}
         </div>
-        <nav className="ds-nav">{NAV.map(([v, label, d]) => <a key={v} href={eid ? href(eid, v) : '#/new'} className={(route.view === v || (v === 'chats' && route.view === 'chat') || (v === 'home' && route.view === 'size')) && eid ? 'on' : ''}><Icon d={d} />{label}
+        <nav className="ds-nav">{NAV.map(([v, label, d]) => <a key={v} href={eid ? href(eid, v) : '#/new'} className={(route.view === v || (v === 'chats' && route.view === 'chat') || (v === 'home' && (route.view === 'size' || route.view === 'dependencies'))) && eid ? 'on' : ''}><Icon d={d} />{label}
           {v === 'notes' && (summary?.notes_flagged || 0) > 0 ? <span className="ct" style={{ color: 'var(--amber)' }} title="Notes whose cited evidence moved since the last upload">{summary!.notes_flagged} to review</span> : counts[v] ? <span className="ct">{counts[v]}</span> : null}</a>)}</nav>
         <button className="ds-new" onClick={newChat}><Icon d="M12 5v14M5 12h14" s={14} />New chat</button>
         <div className="k">Chats in this workspace</div>

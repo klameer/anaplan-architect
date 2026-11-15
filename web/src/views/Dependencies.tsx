@@ -3,9 +3,11 @@
 // line items at their shortest distance, the selection excluded, a cycle never counted twice), rolled up to modules,
 // with actions listed apart at module level, other models listed apart as inferred, and the coverage gaps beside every
 // count. Then the graph, grown one click at a time. Every object is a chip that opens the evidence drawer.
+// It is not on the menu: a reader arrives from an object, a reach answer or the dashboard's most-read list, already on
+// one selection, so the search sits behind "Browse everything" until it is wanted.
 import React, { useEffect, useMemo, useState } from 'react'
 import { ago, api, fmtN, type Citation, type DepHit, type DepSearch, type Reach } from '../api'
-import { depsHref, useApp } from '../App'
+import { depsHref, href, useApp } from '../App'
 import { CiteChip, Obj, type NameIndex } from '../objects'
 import { DepGraph } from './DepGraph'
 
@@ -31,6 +33,7 @@ export function Dependencies() {
   const [err, setErr] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [showAll, setShowAll] = useState(false)
+  const [browse, setBrowse] = useState(false)
 
   useEffect(() => {
     if (!sid) return
@@ -62,38 +65,41 @@ export function Dependencies() {
   }, [reach, filter, showAll])
 
   if (!s) return null
-  if (!s.snapshot) return <div><div className="kicker">Estate</div><h1>{s.name}</h1><h2>Dependencies</h2><div className="card muted">No active snapshot. Upload and activate one on Home.</div></div>
+  if (!s.snapshot) return <div><h2>What does a change touch?</h2><div className="card muted">Nothing is uploaded yet. Upload the exports on the <a href={href(eid, 'home')}>workspace page</a> first.</div></div>
 
   const select = (h: DepHit) => go(depsHref(eid, h.model, h.ref))
   const c = reach?.counts
-  const tableOpen = !reach || q.trim() !== ''
+  const picked = !!(model && ref)
+  const searchOpen = !picked || browse
+  const tableOpen = searchOpen && (!reach || browse || q.trim() !== '')
   const hasEffort = !!reach && reach.nodes.some(n => n.effort != null)
 
   return (
     <div>
-      <div className="kicker">Estate</div>
-      <h1>{s.name}</h1>
-      <h2>Dependencies</h2>
-      <p className="muted small">Find a line item or a module, then read the reach of a change to it: what depends on it, or what it depends on, counted once each at the shortest distance. Actions are linked at module level and other models are inferred from import names, so both are listed apart from the counts.</p>
+      <div className="small" style={{ marginBottom: 6 }}><a href={href(eid, 'home')}>← {s.name}</a></div>
+      <h2 style={{ marginTop: 0 }}>What does a change touch?</h2>
+      <p className="muted small">Pick a line item or a module to see everything that reads it, or everything it reads. Use it before a change, to know what to retest, or to trace where a number comes from. Each line item is counted once, at its shortest distance. Actions and other models are listed apart from the counts.</p>
 
-      <div className="deps-head">
+      {picked && !browse && <div style={{ margin: '4px 0 14px' }}><button className="small quiet" onClick={() => setBrowse(true)}>Browse every line item and module</button></div>}
+
+      {searchOpen && <div className="deps-head">
         <div className="grow"><label className="kicker">Find</label><input value={q} placeholder="Name, module or formula text… (empty: the most depended-on line items)" onChange={e => setQ(e.target.value)} /></div>
         <div><label className="kicker">Model</label><select value={mf} onChange={e => setMf(e.target.value)}><option value="">all models</option>{s.models.filter(m => !m.retired).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}</select></div>
         <div><label className="kicker">Kind</label><select value={kf} onChange={e => setKf(e.target.value)}><option value="">line items and modules</option><option value="line_item">line items</option><option value="module">modules</option></select></div>
-      </div>
+      </div>}
 
       {tableOpen && <div className="card" style={{ padding: '4px 12px 8px', marginBottom: 16 }}>
         <div className="scroll"><table>
-          <thead><tr><th>Object</th><th>Model</th><th>Kind</th><th className="num">Cells</th><th className="num">Uses</th><th className="num">Used by</th><th /></tr></thead>
+          <thead><tr><th>Object</th><th>Model</th><th>Kind</th><th className="num">Cells</th><th className="num" title="How many line items its formula reads">Reads</th><th className="num" title="How many line items read it">Read by</th><th /></tr></thead>
           <tbody>
             {res === null && <tr><td colSpan={7} className="muted small">{searching ? 'Searching…' : ''}</td></tr>}
             {res && !res.hits.length && <tr><td colSpan={7} className="muted small">Nothing matches.</td></tr>}
             {(res?.hits || []).map(h => <tr key={h.model + '|' + h.ref} className={'sel-row' + (h.model === model && h.ref === ref ? ' on' : '')} onClick={() => select(h)} title="Read the reach of a change to this">
-              <td><Chip r={h.ref} id={h.id} kind={h.kind} model={h.model} snapshot={sid} idx={idx} />{h.in === 'formula' && <span className="muted small"> · in its formula</span>}{h.in === 'hub' && <span className="muted small"> · hub</span>}</td>
+              <td><Chip r={h.ref} id={h.id} kind={h.kind} model={h.model} snapshot={sid} idx={idx} />{h.in === 'formula' && <span className="muted small"> · in its formula</span>}{h.in === 'hub' && <span className="muted small" title="Among the most read in the workspace: a change here reaches furthest"> · widely read</span>}</td>
               <td><Obj text={h.model} idx={idx} /></td>
               <td className="small">{h.kind === 'module' ? `module · ${h.line_items} line items` : h.calculated ? 'calculated' : 'input'}</td>
               <td className="num">{h.cells ? fmtN(h.cells) : ''}</td><td className="num">{h.uses}</td><td className="num">{h.used_by}</td>
-              <td><button className="small quiet" onClick={e => { e.stopPropagation(); select(h) }}>Reach →</button></td>
+              <td><button className="small quiet" onClick={e => { e.stopPropagation(); select(h) }}>What it touches →</button></td>
             </tr>)}
           </tbody>
         </table></div>
@@ -104,7 +110,7 @@ export function Dependencies() {
 
       {reach && c && <>
         <div className="sel-head">
-          <span className="kicker">Reach of a change to</span>
+          <span className="kicker">A change to</span>
           <Chip r={reach.selection.ref} id={reach.selection.id} kind={reach.selection.kind} model={reach.selection.model} snapshot={sid} idx={idx} />
           <span className="muted small">in</span><Obj text={reach.selection.model} idx={idx} />
           <span className="grow" />
@@ -175,7 +181,7 @@ export function Dependencies() {
         <DepGraph eid={eid} model={reach.selection.model} refName={reach.selection.ref} snapshot={sid} />
       </>}
 
-      {!reach && !err && <div className="card muted small">Pick a line item or a module above to read the reach of a change to it, then grow the graph from it.</div>}
+      {!reach && !err && <div className="card muted small">Pick a line item or a module above. The list starts with the most widely read: a change to one of those reaches furthest.</div>}
     </div>
   )
 }
