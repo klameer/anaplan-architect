@@ -1,7 +1,8 @@
-# The five answer patterns
+# The answer patterns
 
 Each kind of question has its own shape of answer: a few lines first, then the figure or evidence that kind of
-question needs. A sixth, the exact count, is on [its own page](line-item-index.md).
+question needs. There are seven here; the exact count is on [its own page](line-item-index.md). How short an answer
+is kept, and the line saying what it read besides the exports, are on [Tight answers](tight-answers.md).
 
 ## Why was it built this way
 
@@ -52,8 +53,37 @@ You get the reach: how many line items, in how many modules, holding how many ce
 change, drawn as rings by distance, or as steps. Then by module, the actions that touch it, other models it reaches,
 and what the exports cannot show.
 
+## What do the documents say about this
+
+Ask: *What do the project documents say about CAL03 Opex?*
+
+You get every section of every document that names the object, grouped by document, with the objects each section
+names, and a few lines on what they add up to. If two documents disagree, the answer says so in one line. See
+[Documents](documents.md).
+
+## How is this calculated
+
+Ask: *How is the depreciation charge calculated?*
+
+You get the formula taken apart, not retyped. The formula grammar parses it, and the page draws what the parse found:
+
+- an IF chain as its branches in order, one row each: the condition, then the result, then what is left when none
+  holds;
+- every reference as a chip that opens the object it resolves to; every function named;
+- **Where it comes from**: the trace upstream, inputs on the left and the line item on the right, with how many line
+  items it rests on, how many of them are inputs and how many steps deep it goes.
+
+The words beside it say what the picture cannot: what the formula does in plain terms, and what a builder would not
+see at a glance, such as a fallback that is wider than the design record describes. Any owner note or document
+passage about the line item is cited.
+
+All of the picture is computed by code from the parse and the formula graph. None of it is the model's wording, so it
+is right even when the prose is thin. A formula the grammar cannot parse is shown as written and said to be so.
+
 ## How it is built
 
+- The calculation: `orac/calc.py` (`block`, `parts`), from `anaplan_grammar`'s parse tree and the formula graph;
+  `CalcBlock` and `TraceDiagram` in `web/src/views/Answer.tsx`. Tests: `tests/test_calc.py`.
 - The kind is decided from what was asked and which tools the answer used: `question_kind` in
   `src/anaplan_architect/chat.py`.
 - The figures are drawn from data the tools returned, kept on the answer as *blocks* (`_blocks` in `chat.py`), so the

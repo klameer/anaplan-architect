@@ -188,7 +188,7 @@ def test_why_cites_the_passage_and_the_context_holds_only_what_was_pulled(tmp_pa
     assert t["run"]["steps"][-1]["out"] == "clean" and t["run"]["tool_calls"] == 2 and t["run"]["model_calls"] == 3
     # it is all kept: the stored turn carries the same, the drawer opens the passage, the card counts the citation
     stored = c.get(f"/api/conversations/{conv['id']}").json()["turns"][0]
-    assert stored["context"]["total"] == ctx["total"] and stored["run"]["steps"][1]["name"] == "search_documents" and stored["blocks"][0]["type"] == "passages"
+    assert stored["context"]["total"] == ctx["total"] and stored["run"]["steps"][1]["name"] == "search_documents" and [b["type"] for b in stored["blocks"]][:2] == ["beyond", "passages"]
     ev = c.get(f"/api/citations/{doc[0]['id']}").json()
     assert ev["kind"] == "document" and ev["object"]["heading"] == "2 Margin logic" and ev["object"]["quotes"][0]["found"] and "zero denominator" in ev["object"]["text"]
     card = c.get(f"/api/estates/{eid}/documents").json()["documents"][0]
@@ -231,8 +231,8 @@ def test_budget_cuts_a_result_and_concise_mode_is_carried(tmp_path, monkeypatch)
     assert item["tokens"] <= 900 and any("the rest of the result" in x["label"] for x in t["context"]["left_out"])
     assert "Answer mode: concise" in json.dumps(model.seen[0]["messages"][-1]["content"])
     # the default mode is a preference, kept for the machine when there are no accounts
-    assert c.get("/api/prefs").json() == {"answer_mode": "full"}
-    assert c.put("/api/prefs", json={"answer_mode": "concise"}).json() == {"answer_mode": "concise"}
+    assert c.get("/api/prefs").json() == {"answer_mode": "full", "edit_pass": True}
+    assert c.put("/api/prefs", json={"answer_mode": "concise"}).json() == {"answer_mode": "concise", "edit_pass": True}
     model.steps = [lambda r: "## Brief\n\nShort."]
     t2 = c.post(f"/api/conversations/{conv['id']}/messages", json={"text": "and again"}).json()
     assert t2["mode"] == "concise"

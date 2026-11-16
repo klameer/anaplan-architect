@@ -8,7 +8,7 @@ import { useApp } from '../App'
 import { Obj } from '../objects'
 import { Sec } from './Answer'
 
-type Sect = { id: string; seq: number; heading: string; level: number; tokens: number; cited: number }
+type Sect = { id: string; seq: number; heading: string; level: number; tokens: number; cited: number; names?: string[] }
 type Doc = { id: string; title: string; doc_type: string; filename: string; ext: string; bytes: number; doc_date: string | null; summary: string; summary_by: string; words: number; version: number
   problem: string | null; uploaded_at: string; sections: Sect[]; objects: { model: string; kind: string; ref: string; n: number }[]; tokens: number; sections_cited: number; answers: number }
 type Payload = { documents: Doc[]; totals: { documents: number; sections: number; tokens: number }; limits: { documents: number; bytes: number; note: string }; results?: { ok: boolean; filename: string; error?: string }[] }
@@ -67,6 +67,11 @@ export function DocumentsPage() {
         {doc.sections.length > 0 && <div><div className="strip" role="img" aria-label={`${doc.sections.length} sections, ${doc.sections_cited} quoted`}>{doc.sections.map(s => <i key={s.id} className={s.cited ? 'c' : ''} title={`${s.heading || 'opening'} · ${fmtN(s.tokens)} tokens${s.cited ? ` · quoted in ${s.cited} answer${s.cited !== 1 ? 's' : ''}` : ''}`} style={{ height: 4 + Math.round(10 * s.tokens / maxT), cursor: 'pointer' }} onClick={() => openEvidence({ ref: s.id, kind: 'document' })} />)}</div>
           <div className="sl"><span>{doc.sections.length} section{doc.sections.length !== 1 ? 's' : ''} · {fmtN(doc.tokens)} tokens</span><span>{doc.sections_cited ? <><b>{doc.sections_cited} quoted</b> in {doc.answers} answer{doc.answers !== 1 ? 's' : ''}</> : 'not quoted yet'}</span></div></div>}
         {heads.length > 0 && <div className="hd">{(openDoc === doc.id ? heads : heads.slice(0, 5)).join('  ·  ')}{heads.length > 5 && <> <button className="ds-aff" onClick={() => setOpenDoc(openDoc === doc.id ? null : doc.id)}>{openDoc === doc.id ? 'fewer' : `+${heads.length - 5}`}</button></>}</div>}
+        {openDoc === doc.id && doc.sections.some(s => (s.names || []).length > 0) && <div className="ds-secnames" data-secnames={doc.id}>
+          <div className="k">Sections and the objects they name</div>
+          {doc.sections.filter(s => (s.names || []).length > 0).map(s => <div className="sr" key={s.id} role="button" tabIndex={0} onClick={() => openEvidence({ ref: s.id, kind: 'document' })}>
+            <span className="hd">{s.heading || 'opening'}</span><span className="ds-chips">{s.names!.slice(0, 5).map(n => <Obj key={n} text={n} idx={idx} />)}{s.names!.length > 5 && <span className="ds-chip">+{s.names!.length - 5}</span>}</span></div>)}</div>}
+        {doc.objects.length > 0 && openDoc !== doc.id && <button className="ds-aff" style={{ alignSelf: 'flex-start' }} onClick={() => setOpenDoc(doc.id)}>which sections name which objects</button>}
         {doc.objects.length > 0 && (() => { const refs = Array.from(new Set(doc.objects.map(o => o.ref))); return <div className="ds-chips">{refs.slice(0, 4).map(r => <Obj key={r} text={r} idx={idx} />)}{refs.length > 4 && <span className="ds-chip">+{refs.length - 4} objects</span>}</div> })()}
         <div className="da"><span>read {doc.uploaded_at.slice(0, 10)}</span><span className="grow" /><button disabled={!!busy} onClick={() => { setReplacing(doc); setTimeout(() => repl.current?.click(), 0) }}>Replace with a new version</button><button disabled={!!busy} onClick={() => remove(doc)}>Remove</button></div>
       </div> })}</div>

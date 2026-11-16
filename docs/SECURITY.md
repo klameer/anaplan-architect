@@ -1,8 +1,9 @@
 # Security: what this protects, and what it does not
 
 Rewritten 2026-11-13 after an independent code review and an independent security review of commit `408cf35`, to
-describe the code as it is after their findings were fixed. Report a problem privately to the maintainer before
-opening a public issue.
+describe the code as it is after their findings were fixed. How to report a problem is in
+[SECURITY.md](../SECURITY.md). Which commit each review was run on, what it found and what was fixed is in
+[the review log](SECURITY-REVIEWS.md): this page describes the design, the log says which version was reviewed.
 
 ## What it is
 

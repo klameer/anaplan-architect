@@ -18,7 +18,9 @@ export function Settings() {
   const [pw, setPw] = useState({ old: '', new: '' })
   const [demo, setDemo] = useState<{ available: boolean; workspaces: { id: string; name: string; present: boolean }[] } | null>(null)
   const [busy, setBusy] = useState(false)
-  useEffect(() => { api<{ answer_mode: 'full' | 'concise' }>('/api/prefs').then(p => setMode(p.answer_mode)).catch(() => {}); api<any>('/api/demo').then(setDemo).catch(() => {}) }, [])
+  const [tight, setTight] = useState(true)
+  async function saveTight(on: boolean) { try { const p = await api<any>('/api/prefs', json('PUT', { edit_pass: on })); setTight(p.edit_pass !== false) } catch (e: any) { toast(e.message) } }
+  useEffect(() => { api<any>('/api/prefs').then(p => { setMode(p.answer_mode); setTight(p.edit_pass !== false) }).catch(() => {}); api<any>('/api/demo').then(setDemo).catch(() => {}) }, [])
   if (!me) return null
   async function saveMode(m: 'full' | 'concise') { try { const p = await api<{ answer_mode: 'full' | 'concise' }>('/api/prefs', json('PUT', { answer_mode: m })); setMode(p.answer_mode); sessionStorage.removeItem('mode') } catch (e: any) { toast(e.message) } }
   async function changePw() { try { await api('/api/auth/password', json('POST', pw)); setPw({ old: '', new: '' }); toast('Password changed. Other sessions were signed out.') } catch (e: any) { toast(e.message) } }
@@ -45,6 +47,9 @@ export function Settings() {
         <div className="r" style={{ alignItems: 'center' }}><span style={{ width: 170, flex: 'none' }}>Answer mode</span>
           <span className="grow dim" style={{ fontSize: 12.5 }}>{mode === 'full' ? 'Full: the answer in a few lines, then the diagram, the source cards and the tables for its question type.' : 'Concise: the steps, or a few lines with the key figures. Show diagram, explain and expand to Full open in place.'} The switch on the composer changes it for one browser session.</span>
           <div className="ds-seg" role="group" aria-label="Answer mode"><button className={mode === 'full' ? 'on' : ''} onClick={() => saveMode('full')}>Full</button><button className={mode === 'concise' ? 'on' : ''} onClick={() => saveMode('concise')}>Concise</button></div></div>
+        <div className="r" style={{ alignItems: 'center' }} id="edit-setting"><span style={{ width: 170, flex: 'none' }}>Editing pass</span>
+          <span className="grow dim" style={{ fontSize: 12.5 }}>{tight ? 'On: a long Full answer is cut to what you need by one short extra model call before it is checked. The edit may only cut: code throws it away if it adds a name, a figure, a quote or a citation. It is on the run timeline and on your spend.' : 'Off: the answer is shown as drafted, then checked.'}</span>
+          <div className="ds-seg" role="group" aria-label="Editing pass"><button className={tight ? 'on' : ''} onClick={() => saveTight(true)}>On</button><button className={!tight ? 'on' : ''} onClick={() => saveTight(false)}>Off</button></div></div>
         <div className="r"><span style={{ width: 170, flex: 'none' }}>Theme</span><span className="grow dim" style={{ fontSize: 12.5 }}>Dark. There is no light theme in v0.2.</span></div>
       </div>
 

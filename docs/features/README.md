@@ -7,9 +7,11 @@ One page per feature. Each says what it does, how to use it, and how it is built
 | [Workspaces and logins](workspaces-and-logins.md) | A workspace as an isolated unit, memberships, sign-in, the demo workspaces, deleting a workspace |
 | [Documents](documents.md) | Project documents as cards and sections, search, quotes and how they are checked |
 | [The line-item index](line-item-index.md) | Exact counts and filters over every line item of every model |
-| [The five answer patterns](answer-patterns.md) | Why, build plan, overview, improve, implications, and the exact count |
-| [Build plans](build-plans.md) | A plan as instructions, and what code checks before it is shown |
+| [The answer patterns](answer-patterns.md) | Why, build plan, overview, improve, implications, the calculation, and the exact count |
+| [Build plans](build-plans.md) | A plan as instructions, what code checks before it is shown, and the slots you supply |
+| [Planual flags](planual-flags.md) | Advisory flags by rule number on a build plan and on improvements, and what is kept on purpose |
 | [Concise and Full](concise-and-full.md) | The two answer modes, explain, show diagram, expand to Full |
+| [Tight answers and "beyond the exports"](tight-answers.md) | The shape of an answer, the editing pass that may only cut, the line saying what was read besides the exports, and the questions to ask next |
 | [The context budget and context view](context.md) | What the model is given for an answer, and what is left out |
 | [The run timeline](run-timeline.md) | The calls behind an answer, in order, with no outside account |
 | [The validator](validator.md) | What is checked before you see an answer |
@@ -19,8 +21,8 @@ One page per feature. Each says what it does, how to use it, and how it is built
 | [Model providers](model-providers.md) | Anthropic, Bedrock, Azure, any OpenAI-compatible endpoint |
 | [Hosting](hosting.md) | One machine, a server for several people, Railway |
 
-See also: [the walkthrough](../WALKTHROUGH.md), which clicks through all of it on the demo, and
-[what it protects and what it does not](../SECURITY.md).
+See also: [the walkthrough](../WALKTHROUGH.md), which clicks through all of it on the demo,
+[what it protects and what it does not](../SECURITY.md), and [the security review log](../SECURITY-REVIEWS.md).
 
 The page says **workspace**; the code and the store say **estate** (table `estates`, routes `/api/estates/...`).
 They are the same thing. The store's own `workspaces` table is the instance itself.

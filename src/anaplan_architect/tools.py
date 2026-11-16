@@ -304,7 +304,22 @@ class Toolbox:
                 continue
             st = states.get("action:" + c["key"]) or {}
             m = runs.get(c["model"])
-            out.append({"key": c["key"], "rank": c["rank_reason"].split(":")[0], "kind": c["kind"], "on_plan": c["key"] in plan, "tests": c.get("tests") or [], "title": c["title"],
+            from .orac import planual
+            nums, rule_label = planual.card_rules(self.w.estate, c.get("finding_ids") or [])
+            kept = None
+            if b is not None:
+                try:
+                    kept = planual.kept(b.db, b.estate_id, c["model"], c["objects"], st, self.w.snapshot_id)
+                except Exception:
+                    kept = None
+            extra = {"rule": rule_label}
+            if kept:                                   # already decided: the answer says kept on purpose and cites this, it does not raise it as new
+                if kept["by"] == "note":
+                    self._cites[kept["id"]] = self.ev.mint("note", "", kept["id"], kept["title"], tool="notes").id
+                extra["kept_on_purpose"] = (f"owner note {kept['id']}: {kept['title']}" if kept["by"] == "note" else
+                                            f"document section {kept['id']} ({kept['title']}): read it with get_section before quoting" if kept["by"] == "document" else
+                                            f"the owner's decision on this action: {kept['title']}")
+            out.append({**extra, "key": c["key"], "rank": c["rank_reason"].split(":")[0], "kind": c["kind"], "on_plan": c["key"] in plan, "tests": c.get("tests") or [], "title": c["title"],
                         "model": self._model(c["model"]), "objects": [self._obj(m, o) for o in c["objects"][:8]] if m else c["objects"][:8],
                         "met_bar": c["worth"], "why_not": c["why_not"], "state": st.get("state", "to_review"), "state_reason": st.get("reason", ""),
                         "footprint_cells": c["footprint_cells"], "footprint_effort": c["footprint_effort"], "strength": c["strength"],
@@ -467,6 +482,32 @@ class Toolbox:
                      "No hit means no document here covers it: say it is not recorded, never fill it in.")
         return r
 
+    def object_documents(self, name: str, model: str | None = None) -> dict:
+        """What the project documents say about one object, by the link made when each document was read in: every section
+        that names this module or line item, with the objects each names. Snippets only; get_section reads one."""
+        from .orac import documents as docsmod
+        db, eid = self._docs()
+        if db is None:
+            return {"error": "project documents live in the web app's store"}
+        kind, m, obj = self.w.find_object(name, model)
+        if kind == "line_item":
+            ref = self._li(m, obj.key)
+        elif kind == "module":
+            ref = self._mod(m, obj.name)
+        else:
+            return {"error": f"no module or line item named {name!r}: look it up with find first"}
+        r = docsmod.about(db, eid, ref, m.name)
+        for s in r["sections"]:
+            self._section_cite(s["section"], s["document"], s["heading"])
+            row = docsmod.get_section(db, s["section"], eid)
+            if row:
+                self.sections[s["section"]] = row
+        r["model"] = self._model(m.name); r["kind"] = kind
+        r["note"] = ("these are the sections that name the object: read the ones that bear on the question with get_section before quoting. The page lists them all beside "
+                     "your answer, so do not list them: say what they add up to, and say in one line if two of them disagree. "
+                     + ("No document names it: say so, then say only what the estate shows." if not r["sections"] else ""))
+        return r
+
     def get_section(self, section: str) -> dict:
         """One section of a project document, in full, with the objects it names. Quote from it word for word."""
         from .orac import documents as docsmod
@@ -550,6 +591,13 @@ class Toolbox:
                     "Look an existing object up (get_object, find, query_line_items) before you refer to it; write a reference to another module as 'Module Name'.Line Item. "
                     "An existing line item is changed under changes (its whole new formula), never under a module's line_items."}
         plan = r["plan"]
+        from .orac import planual
+        try:
+            planual.attach(m, plan)                    # advisory flags on the planned line items: never a reason to reject
+        except Exception:
+            plan["planual"] = {"flags": [], "departs": 0, "as_per": 0, "note": ""}
+        for s in plan.get("supply") or []:             # a slot is a name the answer may use: it is unresolved by design, not a name the estate lacks
+            self.planned.add(s["slot"].lower()); self.planned.add(s["slot"].replace("'", "").lower()); self.planned.add(s["slot"].split(".", 1)[1].strip("'").lower())
         self._model(m.name)
         for name in plan["existing"]:
             if name in m.model.modules:
@@ -571,7 +619,12 @@ class Toolbox:
                 if ref.get("module") and not ref.get("new") and (ref["module"], ref["path"].split(".")[-1]) in m.model.line_items:
                     self._li(m, (ref["module"], ref["path"].split(".")[-1]))
         c = plan["checks"]
+        dep = [f"{f['object']}: {f['label']} ({f['why']})" for f in plan["planual"]["flags"] if f["state"] == "departs"]
         return {"ok": True, "plan": plan,
+                "planual": dep[:12] or ["no departure flagged on the planned line items"],
+                "planual_note": "advisory flags only, shown on the plan beside each line item: a departure does not reject the plan. If one matters, say so in one line with its rule number, "
+                                "in your own words; never quote the Planual.",
+                **({"you_supply": [f"{s['what']} (a member of {s['list']}), marked {s['slot']} in {', '.join(s['where'])}" for s in plan["supply"]]} if plan.get("supply") else {}),
                 "summary": {"modules": [f"{x['step']}. {x['name']} ({x['state']}, {len(x['items'])} line items)" for x in plan["modules"]], "formulas_parsed": f"{c['parsed']} of {c['formulas']}",
                             "references": f"{c['refs_existing']} to the model, {c['refs_new']} to this plan", "order": "no cycle; each step reads only the model as it is or earlier steps",
                             "existing_formulas_changed": [f"{x['module']}.{x['name']}" for x in plan["changes"]], "builder_steps": len(plan["steps"])},
@@ -635,7 +688,8 @@ class Toolbox:
              "Give every module you would add or extend with its line items: name, format, summary method, and formula in Anaplan syntax (blank for an input), a reference to another module written as 'Module Name'.Line Item. "
              "If the build replaces something the model does today, list under changes each existing line item whose formula must switch over to what you built, with its whole new formula; change nothing else. "
              "Give checks_after: what the builder compares or looks at once it is built to know it is right, six at most. Under lists, name each list or line item subset the build needs that the model does not have, and say what it is. "
-             "Code parses every formula, resolves every reference against the model and against the plan's own new objects, sorts everything so nothing is built before what it refers to, and rejects the plan (with what to fix) "
+             "When the build needs a list member whose name you cannot know (an export holds no list members), do not stop to ask: write it as List.'YOU SUPPLY: what it is', for example Accounts.'YOU SUPPLY: the legal fees account'; "
+             "the plan lists it once under what the builder must provide. Code parses every formula, resolves every reference against the model and against the plan's own new objects, sorts everything so nothing is built before what it refers to, and rejects the plan (with what to fix) "
              "if a formula does not parse, a reference resolves to nothing, or there is a cycle. Look up the existing modules and line items you intend to read or change first; reuse what exists.",
              "input_schema": {"type": "object", "required": ["model", "title", "modules"], "properties": {
                  "model": {"type": "string", "description": "the model the plan is for"},
@@ -657,5 +711,6 @@ class Toolbox:
                      "name": {"type": "string"}, "what": {"type": "string", "description": "one plain line: what it is (a list, or a line item subset of which module) and what it holds"}}}},
                  "checks_after": {"type": "array", "items": {"type": "string"}, "description": "what to check once it is built, each one plain sentence a builder can act on; put an object name in backticks only if it is the exact name"}}}},
             {"name": "search_documents", "description": "Search the workspace's project documents (design records, meeting notes, handover notes, change requests, scripts) by keyword and by the objects a section names. Returns section hits with ids and snippets, never whole documents. Call for any question about why something was built, decided or left as it is.", "input_schema": S(query=("string", "keywords from the question", 0), objects=("string", "comma-separated module or 'Module.Line Item' names the question is about", 0), document=("string", "restrict to one document id", 0), limit=("integer", "max hits, default 6", 0))},
+            {"name": "object_documents", "description": "What the project documents say about one module or line item, by the link made when each document was read in: every section that names it, oldest document first, with the objects each section names. Call this first for any question about what the documents say, record or decided about an object; then search_documents for what the link may miss.", "input_schema": S(name=("string", "a module name or 'Module.Line Item'"), model=("string", "model name", 0))},
             {"name": "get_section", "description": "Read one section of a project document in full, by the section id search_documents returned. Read a section before quoting it or resting an answer on it.", "input_schema": S(section=("string", "a section id such as s-1a2b3c4d5e"))},
         ]

@@ -12,6 +12,7 @@ from anaplan_grammar.parser import parse, ParseError, references_ctx
 from anaplan_estate.graph import PSEUDO_LISTS, LIST_ARG
 from anaplan_estate.model import LineItem
 
+SUPPLY = "YOU SUPPLY"          # a list member written as List.'YOU SUPPLY: what it is': a slot the builder fills, not a failed reference
 FORMATS = ("Number", "Boolean", "Text", "Date", "List", "Time period", "No data")
 MAX_MODULES, MAX_ITEMS = 12, 120
 
@@ -136,6 +137,7 @@ def check(model_run, proposal: list[dict], title: str = "", changes: list[dict] 
     used_items: dict = {}                                               # existing line items the build refers to, in first-use order
     used_lists: dict = {}
     old_reads: dict = {}                                                # new line item -> the existing line items its formula reads
+    supply: dict = {}                                                   # slot as written -> what the builder must provide, and where it is used
 
     def resolve(mn: str, name: str, formula: str) -> tuple[list[dict], set, set]:
         """The references of one formula, each resolved against the model and the plan; faults go to `errors`.
@@ -170,6 +172,11 @@ def check(model_run, proposal: list[dict], title: str = "", changes: list[dict] 
                     kind, target = "line_item", (mod_name, b)
                 elif a in known_dims or a.upper() in PSEUDO_LISTS:
                     kind = "list_item"                              # a member on a list: the exports hold no members, so it is not checked
+                    if b.upper().startswith(SUPPLY):                # a member the architect could not know: a slot the builder fills, listed once
+                        slot = f"{a}.'{b}'"
+                        s = supply.setdefault(slot, {"slot": slot, "list": a, "what": b[len(SUPPLY):].strip(" :") or "the member to use", "where": []})
+                        if f"{mn}.{name}" not in s["where"]:
+                            s["where"].append(f"{mn}.{name}")
                 elif mod_name in mods or mod_name in m.modules:
                     kind = "unresolved"                             # a real module, but no such line item in it
                 else:
@@ -285,7 +292,7 @@ def check(model_run, proposal: list[dict], title: str = "", changes: list[dict] 
             "line_items": [{"module": a, "name": b} for a, b in list(dict.fromkeys([(c["module"], c["name"]) for c in out_changes] + list(used_items)))], "lists": list(used_lists)}
     plan = {"model": model_run.name, "title": title.strip()[:160], "modules": out_mods, "existing": existing, "changes": out_changes, "after": checks_after[:12],
             "uses": uses, "new_lists": new_dims, "interleaved": interleaved, "list_notes": {d: list_what[d] for d in new_dims if list_what.get(d)},
-            "edges": [[d, mn] for mn in morder for d in sorted(reads[mn])],
+            "edges": [[d, mn] for mn in morder for d in sorted(reads[mn])], "supply": list(supply.values()),
             "checks": {"formulas": count["formulas"], "parsed": count["parsed"], "refs_existing": count["existing"], "refs_new": count["new"], "ordered": True, "steps": len(out_mods),
                        "changes": len(out_changes), "notes": notes}}
     plan["steps"] = steps(plan)
@@ -301,6 +308,9 @@ def steps(plan: dict) -> list[dict]:
     out: list[dict] = []
     def add(kind: str, text: str, **more):
         out.append({"n": len(out) + 1, "kind": kind, "text": text, **more})
+    for s in plan.get("supply") or []:
+        add("supply", f"You supply: {s['what']}. It is a member of the list {s['list']}, and an export holds no list members, so the plan cannot name it. "
+                      f"Put it where the formula of {' and '.join(s['where'])} says {s['slot']}.", slot=s["slot"], list=s["list"], what=s["what"], where=s["where"])
     for d in plan.get("new_lists") or []:
         what = (plan.get("list_notes") or {}).get(d)
         add("list", f"Create {d}: {what.rstrip('.')}." if what else f"Create the list {d}, unless the model already has it under another name.", name=d)
@@ -373,6 +383,13 @@ def to_markdown(plan: dict) -> str:
             out.append("- Line items: " + ", ".join(f"{x['module']}.{x['name']}" for x in u["line_items"]))
         if u.get("lists"):
             out.append("- Lists: " + ", ".join(u["lists"]))
+    if plan.get("supply"):
+        out += ["", "## You supply", "", "An export holds no list members, so the plan cannot name these. Each is marked in the formula where it goes.", ""]
+        out += [f"- {s['what']} (a member of {s['list']}), written as {code(s['slot'])} in {', '.join(s['where'])}" for s in plan["supply"]]
+    pf = (plan.get("planual") or {}).get("flags") or []
+    if pf:
+        out += ["", "## Planual flags", "", (plan["planual"].get("note") or ""), ""]
+        out += [f"- {f['object']}: {f['label']}. {f['why'][:1].upper() + f['why'][1:]}." for f in pf]
     out += ["", "## Line items to build", ""]
     for m in plan["modules"]:
         out += [f"### {m['name']}", "", "| Line item | Format | Dimensions | Summary | Formula |", "|---|---|---|---|---|"]

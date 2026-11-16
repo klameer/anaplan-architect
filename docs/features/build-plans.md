@@ -45,6 +45,25 @@ The page says it in one line under the steps: *order checked: nothing is built b
 A plan is a proposal. Nothing is built in Anaplan. The exports hold no list members and no line item subsets, so a
 step that creates one is taken from the model's words, not checked. The formulas need an Anaplan builder's read.
 
+## What you supply
+
+An export holds no list members. So when a plan needs one, such as the account a new branch is for, the architect
+cannot know its name. It does not stop and ask. It builds the plan and writes the member as a marked slot:
+
+```
+IF ITEM(Accounts) = Accounts.'YOU SUPPLY: the legal fees account' THEN 'INP02 Opex Drivers'.Legal Fees ELSE ...
+```
+
+The plan lists each slot once under **You supply**, says which list it is a member of and which formula it goes in,
+and makes it the first step. The check treats a slot as unresolved by design, not as a reference that failed. A slot
+is only allowed for a member of a list the model has: written anywhere else it is an unresolved reference and the
+plan is rejected.
+
+A request to build what a document asks for (*Build what change request CR-031 asks for*) is a plan request: the
+architect reads the document, looks up what already exists, says what the plan reuses, and builds the plan.
+
+Each planned line item also carries advisory [Planual flags](planual-flags.md).
+
 ## How it is built
 
 - The chat tool `build_plan` takes the modules and line items, the existing line items to change, the lists it

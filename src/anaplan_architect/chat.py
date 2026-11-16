@@ -13,6 +13,7 @@ from .tools import Toolbox
 from .orac.evidence import Evidence, CITE_ID, NOTE_ID, SECTION_ID, figures, note_provenance, strip_code
 from .orac import documents as docsmod
 from .orac import telemetry
+from . import edit as editmod
 from .opinion import SYSTEM as ARCHITECT
 
 CHAT_SYSTEM = ARCHITECT + """
@@ -24,7 +25,9 @@ treemap-beta
     "other": 4000000
 and show in the prose the arithmetic that gives "other", so that figure is traced like the rest. No sankey: feeds between models run both ways and it cannot draw a cycle. No pie chart and no bar chart: a table does that better, and the page draws a bar behind every numeric column. Names inside a diagram are not checked against the estate, so every object a diagram shows must also be named in backticks in the prose, and every figure a diagram carries must also appear in the prose or a table, where it is checked against what the tools returned. The feeds list_models returns are read off import names and inferred until the owner has confirmed or retired one; the state and reason travel with the edge, so say which when you describe how the models connect. When the owner confirms or retires a connection and gives a reason, call set_edge_state, and only then. impact reads the whole reach of a line item or a module (every line item once at its shortest distance, rolled up to modules, actions at module level, other models as inferred unless confirmed), upstream with direction=upstream; lineage gives the upstream chain with formulas. A row the owner has already decided on comes back from size under decided with the reason: do not raise it again unless asked; when the owner decides on a size row, call set_action_state with the row's key. Name only objects a tool returned in this conversation: a real object you have not looked up is marked unchecked, a name the estate does not contain is flagged. Owner notes reach you with an id such as n-1a2b3c4d5e; when an answer rests on one, write that id in backticks so the page can open it. Every count, cell figure, effort share or duration you give must be one a tool returned this turn, or arithmetic you show over such figures: a figure with no source is flagged to the owner. When you propose a formula, call validate_formula first and show the result. When the owner tells you a pattern is deliberate or should be ignored, and gives a reason, call set_status; when they tell you something about the estate worth keeping, call remember. When the owner asks what to do first, or for a plan, call action_plan: it holds the plan (the first five candidates that met the bar, picked from the results of every test) with the owner's decisions on them, and with include_below_bar every other candidate with the reason it is not on the plan. When the owner asks what was checked, what came back clear, what could not be run and why, or which test raised something, call tests: name a test by its number and title (test 1.7, line items with a dimension their formula does not use); clear means the pattern was not found in these exports, never proof that it is absent, and not run means an export or a column the test needs is missing. Write a test as its number and its title in plain words: backticks stay for the estate's objects and the keys the tools hand out. When the owner asks why a model is so big, what Versions, Time or a list costs, or which line items carry an axis they do not need, call size: its sizes are solved from cell counts, never exported, each with how many line items agree, and where a model's dimensions are unnamed only Time and Versions are judged; say so when you use them. Call propose_action only when the owner asks for a suggestion to be kept on the plan; say that it is shown as your proposal, unconfirmed, until they take it on. Record a decision on an action with set_action_state only when the owner states it. Never claim to have changed the model: every fix is a proposal the owner applies in Anaplan. If the exports do not carry what is asked (saved views, pages, data values, history), say so plainly.
 
-Shape every answer for a reader who decides first and reads on only if they must. Open with a section headed `## Brief`: three to five sentences that carry the answer, every figure the decision rests on (cited, in backticks as above), and the decision or the next step. Nothing the reader must know may live only below the Brief. Then put everything else under `##` headings, one per topic, each a question the reader might ask next: for a large line item `## Why it has this shape`, `## What can be reduced`, `## Consumers affected`, `## Checks before changing it`; for a change `## Upstream`, `## Downstream`, `## Actions`, `## Other models`, `## Uncertain`, `## Checks`; for a design `## Reuse`, `## Build`, `## Validation`, `## Integration`, `## Acceptance checks`; for a handover `## Estate`, `## Models`, `## Decisions recorded`, `## Risks`, `## Improvements`, `## Open questions`, `## Agenda`. The page shows the Brief open and every other section closed under its heading, so a heading must say what its section answers, and a section must stand on its own when opened. A short question gets a Brief and nothing else. Do not retype what a page already shows: name the object and say which page, the chips open it. A list longer than eight items goes under its own heading, not in the Brief. Every section keeps the citation rules above."""
+Shape every answer for a reader who decides first and reads on only if they must. Open with a section headed `## Brief`: at most three sentences that carry the answer, the figures the decision rests on (cited, in backticks as above) and the decision or the next step. Nothing the reader must know may live only below the Brief. Then at most three short sections under `##` headings, each a question the reader would ask next, and each a list or a small table, not paragraphs: a bullet is one line. The page shows the Brief open and every other section closed under its heading, so a heading must say what its section answers, and a section must stand on its own when opened. A short question gets a Brief and nothing else.
+
+The page draws a graphic and evidence cards beside your words, from the workspace's own data: for a change, the reach as rings and steps with its counts of line items, modules, cells, actions and other models; for an overview, the map of the models with the feeds between them and their sizes; for improvements, the ranked finding cards with their test, cells, effort share and what was decided; for a count, the count with its breakdown by model and module and the first rows; for a build plan, the numbered steps with every formula; for every quoted passage, a card with the document, section and date; for every owner note you cite, a row that opens it. Never restate what those show: no table of the models in an overview, no list of the modules a change reaches, no table of a count's rows, no walk through a plan's steps, no list of the findings. Say what the graphic cannot: what it means, what was decided and by whom, what to do next. Quote at most two passages, one or two sentences each, and only where the answer rests on the words. Aim for under 250 words in all, quoted passages aside. Do not retype what a page already shows: name the object, the chips open it. When the owner asks how something is calculated, call explain on the line item (and lineage when the question is where a number comes from). The page then draws the formula in labelled parts, as the grammar parsed it, with each reference as a chip that opens the object, and the upstream trace back to the inputs: so do not write the formula out, do not list its branches in a table and do not list its inputs. Say in a few lines, in plain words, what it does and in what order, then what a builder would not see at a glance: a fallback wider than the documents describe, a hardcoded value, a branch that can never be reached; and cite any note or passage about it. A request to build what a document asks for (a change request, a design record) is a plan request: read the document, look up what already exists, then call build_plan; say in the Brief what already exists that the plan reuses. Never stop to ask for a list member's name: an export holds no list members, so write it as List.'YOU SUPPLY: what it is' and the plan lists it once under what the builder must provide. Planual. The tool flags the Planual rules it can see in an export, by rule number, as advisory flags: the plan shows each planned line item as per a rule or as departing from one, and each improvement card shows the rule number its finding rests on, or that it is the tool's own test. A departure is a flag, not a fault: the owner may have a reason, and where a note or a document records one, say it is kept on purpose and cite it. Use rule numbers and your own words only, never the Planual's text, and never say the Planual was checked: say what was flagged. When the owner asks what the documents say, record or decided about a module or a line item, call object_documents first: it follows the link made when each document was read in, from the object to every section that names it. Read the sections that bear on the question, then use search_documents for anything the link may miss. The page lists the sections beside your answer, so do not list them: say what they add up to, in date order where that matters. If two documents disagree (on a date, a reason, who decided), say so in one line: that is a finding worth showing. When you quote a passage that names an object, keep the name inside the quoted text exactly as the section has it, with no backticks inside the quotation marks. Each answer is there for one thing, and the page puts that first and largest: the quoted passages for a why-question, the formula in parts for a calculation, the plan for a build, the map for an overview, the finding cards for improvements, the reach for a change, the sections that name the object for what the documents say. Keep everything else small. Outside a why-question and a what-do-the-documents-say question, do not write a section about the documents or the notes and do not quote more than one passage: the line under the Brief already lists what you read, so cite a note or a section in a clause, by its id, only where a statement rests on it. Every section keeps the citation rules above."""
 
 CHAT_SYSTEM += """
 
@@ -37,6 +40,8 @@ CONCISE = ("Answer mode: concise. Give only what the reader needs to act. For a 
 BUDGET_TOKENS = 32000          # what one answer may be given, instructions and tool results together (ARCHITECT_CONTEXT_BUDGET overrides)
 _WHY = re.compile(r"\bwhy\b|\breason(?:s|ing)?\b|\bhow come\b|\brationale\b", re.I)
 _NOT_RECORDED = re.compile(r"not\s+recorded", re.I)
+_CALC = re.compile(r"\bhow (?:is|are|does|do|did)\b.{0,120}\b(?:calculat|comput|work(?:ed|s)? out|deriv|arriv)|\bwhat(?:'s| is| does)? the formula\b|\b(?:explain|walk (?:me )?through|break down) (?:the |this )?(?:formula|calculation)", re.I | re.S)
+_DOCS_Q = re.compile(r"\bdocuments?\b|\brecords?\b|\bdecision record\b|\bchange requests?\b|\bmeeting notes?\b|\bhandover\b|\bwritten down\b", re.I)
 
 
 def est_tokens(text) -> int:
@@ -51,8 +56,12 @@ def question_kind(question: str, tools: list[str]) -> str:
         return "plan"
     if _WHY.search(q):
         return "why"
+    if _CALC.search(q) and ({"explain", "lineage", "get_object"} & set(tools)):
+        return "calculation"
     if "impact" in tools:
         return "implications"
+    if "object_documents" in tools and _DOCS_Q.search(q):
+        return "documents"
     if "query_line_items" in tools and re.search(r"\bhow many\b|\bcount\b|\bnumber of\b|\bwhich line items\b|\blist (?:the |all )?line items\b", q):
         return "count"
     if "action_plan" in tools or re.search(r"\bimprove|\bwhat (?:should|to) (?:we|i) (?:do|fix) first", q):
@@ -346,6 +355,7 @@ class Session:
         self.trace_level = None        # what this turn may send to the outside tracer: off | structure | content; set per turn by who asked
         self.spend_gate = None         # called before every model call; raises SpendCapReached when the login is over its cap
         self.on_spend = None           # called with the usage of every model call as it returns (the login's spend ledger)
+        self.edit_pass = True          # a long draft is cut by one short model call before the validator (the web layer sets it per turn from the login's setting)
         self.recorder = recorder       # called with each finished turn (the store keeps conversations)
         self.retriever = retriever     # question -> owner notes worth showing the model this turn
         self.scope = scope or {}       # {"model": name, "module": name}: what this conversation is about
@@ -426,15 +436,15 @@ class Session:
                 return ev["text"]
         return text
 
-    def _one_call(self, tr=None):
+    def _one_call(self, tr=None, kw: dict | None = None, name: str = "model"):
         """One model call, streamed when the client supports it. Yields
         ("text", delta) and ("tool_start", name) events; returns the final message.
         Traced as one generation: what the model was last given (not the material), what came back, tokens and cost."""
         if self.spend_gate is not None:
             self.spend_gate()                         # before the call, every call: a turn of many calls stops when the cap is reached
-        kw = dict(model=self.model_id, max_tokens=8000, system=self._system(), tools=Toolbox.schema(), messages=self._messages_for_call())
+        kw = kw or dict(model=self.model_id, max_tokens=8000, system=self._system(), tools=Toolbox.schema(), messages=self._messages_for_call())
         tr = tr if tr is not None else telemetry.NullTurn()
-        with tr.generation("model", self.model_id, input=_trace_input(kw, self._material or "")) as g:
+        with tr.generation(name, self.model_id, input=_trace_input(kw, self._material or "")) as g:
             if hasattr(self.client.messages, "stream"):
                 with self.client.messages.stream(**kw) as stream:
                     for event in stream:
@@ -609,12 +619,27 @@ class Session:
                             "out": f"{len(uses)} tool call{'s' if len(uses) != 1 else ''}" if uses else "the answer"})
                 if not uses:
                     text = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+                    calls = [{"tool": x["tool"], "args": x.get("args"), "cites": x.get("cites", 0)} for x in self.tb.log[log_start:]]
+                    kind = question_kind(question, [x["tool"] for x in calls])
+                    edited = None
+                    if self._edits(mode, text):
+                        yield {"type": "tool", "name": "edit", "args": {}}
+                        e0 = time.perf_counter()
+                        try:
+                            text, edited, eu = self._edit(question, kind, text, tr)
+                        except SpendCapReached:
+                            edited, eu = {"applied": False, "why": "the login's spend cap was reached: the draft stands", "before": editmod.prose_words(text), "after": editmod.prose_words(text)}, {}
+                        run.append({"kind": "model", "name": "edit", "t0": round(e0 - t0, 3), "ms": int((time.perf_counter() - e0) * 1000),
+                                    "tokens_in": eu.get("input", 0) + eu.get("cache_read", 0) + eu.get("cache_write", 0), "tokens_out": eu.get("output", 0),
+                                    "out": f"{edited['before']} → {edited['after']} words" if edited["applied"] else "draft kept: " + edited["why"]})
+                        if edited["applied"]:
+                            self.messages[-1] = {"role": "assistant", "content": [{"type": "text", "text": text}]}     # what was shown is what the conversation remembers
+                            yield {"type": "text", "delta": ""}
+                            yield {"type": "text", "delta": text}
                     v0 = time.perf_counter()
                     a = assess_answer(text, self.w, self.ev, self.tb.planned)
                     fig = figures(text, self._sources())
                     quotes = docsmod.check_quotes(text, self.tb.sections)
-                    calls = [{"tool": x["tool"], "args": x.get("args"), "cites": x.get("cites", 0)} for x in self.tb.log[log_start:]]
-                    kind = question_kind(question, [x["tool"] for x in calls])
                     why = None
                     if kind == "why":
                         rests = [x for x in a["cited"] if x.get("kind") in ("document", "note")]
@@ -626,7 +651,7 @@ class Session:
                     ver = verification_of(a, fig, quotes, why)
                     missing = a["unverified"]
                     usage = self.last_turn_usage()
-                    blocks = self._blocks(kind, a, quotes, why, res_start, text)
+                    blocks = [self._beyond(notes, pulled, a)] + self._blocks(kind, a, quotes, why, res_start, text)
                     run.append({"kind": "check", "name": "validator", "t0": round(v0 - t0, 3), "ms": int((time.perf_counter() - v0) * 1000),
                                 "args": f"{len(a['cited'])} cited, {len(quotes)} quote{'s' if len(quotes) != 1 else ''}, {fig.get('checked', 0)} figure{'s' if fig.get('checked', 0) != 1 else ''}",
                                 "out": "clean" if ver["clean"] else "flagged"})
@@ -642,12 +667,14 @@ class Session:
                                "tool_calls": len(calls), "model_calls": usage["calls"]})
                     tr.output(text)
                     self._log({"role": "assistant", "text": text, "unverified_names": missing, "unchecked": a["unchecked"], "citations": a["cited"],
-                               "verification": ver, "tools": calls, "usage": usage, "user": self.user, "mode": mode, "kind": kind})
+                               "verification": ver, "tools": calls, "usage": usage, "user": self.user, "mode": mode, "kind": kind, "edit": edited})
                     if why and why["unsupported"]:                        # never filled in: the page says so above whatever the model wrote
                         text = ("**Not recorded.** No document or note in this workspace gives a reason. What follows is what the estate shows, not a recorded reason.\n\n" + text)
                     turn = {"q": question, "a": text, "tools": calls, "unverified": missing, "unchecked": a["unchecked"], "citations": a["cited"],
                             "verification": ver, "usage": usage, "when": datetime.datetime.now().isoformat(timespec="seconds"), "by": self.user,
                             "mode": mode, "kind": kind, "context": context, "run": runrec, "blocks": blocks}
+                    if edited is not None:
+                        turn["edit"] = edited
                     self.turns.append(turn)
                     if self.recorder is not None:
                         try:
@@ -704,6 +731,77 @@ class Session:
     def id(self) -> str:
         return self.started
 
+    def _calculation(self, results: list, text: str) -> dict | None:
+        """The calculation the page draws for a how-is-it-calculated answer: the line item the architect parsed or traced
+        this turn (the one the answer names first, when there were several), taken apart by code. Every object the
+        block shows is handed as a citation, so each chip opens."""
+        from .orac import calc
+        seen: list[tuple[str, str | None]] = []
+        for name, args, res in results:
+            if name in ("explain", "lineage", "get_object") and isinstance(res, dict) and res.get("object") and not res.get("error"):
+                seen.append((res["object"], res.get("model")))
+        if not seen:
+            return None
+        pos = lambda ref: (text.find("`" + ref + "`") if "`" + ref + "`" in text else 10 ** 9)
+        ref, model = sorted(seen, key=lambda s: pos(s[0]))[0]
+        b = calc.block(self.w, ref, model)
+        if not b:
+            return None
+        m = self.w.models().get(b["model"])
+        if m is not None:
+            for n in b["trace"]["nodes"]:
+                self.tb._li(m, (n["module"], n["name"]))
+        return b
+
+    # ---------- the editing pass ----------
+    def _edits(self, mode: str, draft: str) -> bool:
+        """A Full answer long enough to be worth cutting is edited, unless the login or the instance has turned that off."""
+        if mode == "concise" or not self.edit_pass or os.environ.get("ARCHITECT_EDIT_PASS", "").strip().lower() in ("0", "false", "no", "off"):
+            return False
+        return editmod.prose_words(draft) >= editmod.EDIT_MIN_WORDS
+
+    def _edit(self, question: str, kind: str, draft: str, tr=None) -> tuple[str, dict, dict]:
+        """One short model call that cuts the draft: metered and gated like any other. Returns the text that stands (the
+        edit, or the draft when the edit added anything), what happened, and the call's usage."""
+        kw = dict(model=self.model_id, max_tokens=4000, system=[{"type": "text", "text": editmod.SYSTEM.format(target=editmod.TARGET_WORDS)}],
+                  messages=[{"role": "user", "content": editmod.request(question, kind, draft)}])
+        r = None
+        for k, payload in self._one_call(tr, kw=kw, name="edit"):
+            if k == "final":
+                r = payload
+        self._usage(r)
+        out = "".join(b.text for b in r.content if getattr(b, "type", "") == "text").strip()
+        out = re.sub(r"^-{3,}\s*|\s*-{3,}$", "", out).strip()
+        before = editmod.prose_words(draft)
+        why = editmod.refused(draft, out)
+        if why:
+            return draft, {"applied": False, "why": why, "before": before, "after": before}, _usage_of(r) or {}
+        return out, {"applied": True, "why": "", "before": before, "after": editmod.prose_words(out)}, _usage_of(r) or {}
+
+    def _beyond(self, notes: list[dict], pulled: set[str], a: dict) -> dict:
+        """What this answer read besides the exports: the documents it read a section of (or cited), of how many the
+        workspace holds, and the owner notes it was handed. One line, each name opening its source."""
+        docs: dict[str, dict] = {}
+        for ref in list(pulled) + [x.get("ref") for x in a["cited"] if x.get("kind") == "document"]:
+            row = self.tb.sections.get(ref) or {}
+            if row.get("doc_id") and row["doc_id"] not in docs:
+                title = row.get("doc_title") or row["doc_id"]
+                docs[row["doc_id"]] = {"id": row["doc_id"], "title": title, "section": ref,
+                                       "citation": self.ev.mint("document", "", ref, f"{title} · {row['heading']}" if row.get("heading") else title, "get_section", provenance="observed").id}
+        of = 0
+        b = self.w.backend
+        if b is not None:
+            try:
+                of = docsmod.count(b.db, b.estate_id)
+            except Exception:
+                of = 0
+        cited = {x.get("ref"): x.get("id") for x in a["cited"] if x.get("kind") == "note"}
+        ns = [{"id": n["id"], "title": n.get("title") or n["id"], "cited": n["id"] in cited, "citation": cited.get(n["id"]) or self.ev.mint("note", "", n["id"], (n.get("title") or n["id"]), tool="notes", provenance=note_provenance(n)).id}
+              for n in notes if n.get("id")]
+        ns.sort(key=lambda n: not n["cited"])              # the notes the answer cites come first; the rest were handed over and not used
+        return {"type": "beyond", "documents": list(docs.values()), "of_documents": max(of, len(docs)), "notes": ns,
+                "line": editmod.beyond_line(len(docs), max(of, len(docs)), len(ns))}
+
     def _blocks(self, kind: str, a: dict, quotes: list[dict], why: dict | None, res_start: int, text: str = "") -> list[dict]:
         """What the page draws for this answer beyond its prose: pointers and checked passages, never the model's own words.
         A passage block carries each quote with the text around it in its section; a reach block names the selection the
@@ -739,6 +837,18 @@ class Session:
             res = next((r for r in counts if str(r["count"]) in said and r.get("filters")), None) or next((r for r in counts if r.get("filters")), counts[0])
             blocks.append({"type": "count", "count": res["count"], "cells": res["cells"], "of": res["of_line_items"], "by_model": res["by_model"],
                            "groups": res.get("groups"), "rows": res["rows"][:10], "filters": res.get("filters") or {}, "sorted_by": res.get("sorted_by")})
+        if kind == "documents":
+            for name, args, res in reversed(results):
+                if name == "object_documents" and isinstance(res, dict) and res.get("sections") is not None and not res.get("error"):
+                    blocks.append({"type": "object_documents", "object": res["object"], "model": res.get("model"), "kind": res.get("kind"), "named_in": res["named_in"],
+                                   "documents": res["documents"],
+                                   "sections": [dict(x, citation=self.ev.mint("document", "", x["section"], f"{x['document']} · {x['heading']}" if x["heading"] else x["document"],
+                                                                              "object_documents", provenance="observed").id) for x in res["sections"]]})
+                    break
+        if kind == "calculation":
+            c = self._calculation(results, text)
+            if c:
+                blocks.append(c)
         if kind == "improve":
             blocks.append({"type": "improve"})
         if kind == "overview":
@@ -749,6 +859,13 @@ class Session:
                 break
         if kind == "plan" and not any(b["type"] == "build_plan" for b in blocks):
             blocks.append({"type": "plan_rejected", "rejected": next((res.get("rejected") for name, args, res in reversed(results) if name == "build_plan" and res.get("rejected")), [])})
+        # what to ask next: made by code from what this answer was about, never by the model
+        from . import followups
+        plan = next((b["plan"] for b in blocks if b["type"] == "build_plan"), None)
+        nxt = followups.suggest(kind, followups.subject_of(blocks, a["cited"], text), flags=((plan or {}).get("planual") or {}).get("departs", 0),
+                                not_recorded=any(b["type"] == "not_recorded" for b in blocks))
+        if nxt:
+            blocks.append({"type": "followups", "items": nxt})
         return blocks
 
     def _with_evidence(self, question: str, mode: str = "full") -> tuple[str, list[dict]]:

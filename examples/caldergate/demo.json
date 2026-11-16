@@ -53,5 +53,15 @@
     {"key": "count", "workspace": "caldergate-stores-demo", "moment": 5, "text": "How many line items use FINDITEM, and which modules are they in?"},
     {"key": "plan-concise", "workspace": "caldergate-demo", "mode": "concise", "text": "Give me a plan to build a lookup module that replaces the account mapping inside Forecast Opex."},
     {"key": "implications-concise", "workspace": "caldergate-demo", "mode": "concise", "text": "What are the implications of changing CAL03 Opex?"}
+  ],
+  "showcase": [
+    {"key": "why", "workspace": "caldergate-demo", "feature": "Cited documents, quote-checked", "text": "Why is the account mapping written into the Forecast Opex formula instead of a lookup table?"},
+    {"key": "calculated", "workspace": "caldergate-demo", "feature": "The grammar: a formula read in parts and traced upstream", "text": "How is the depreciation charge calculated?"},
+    {"key": "plan", "workspace": "caldergate-demo", "feature": "A build plan with checked formulas and Planual flags", "text": "Build what change request CR-031 asks for: a legal fees driver in the opex forecast."},
+    {"key": "overview", "workspace": "caldergate-demo", "feature": "The model map", "text": "Give me an overview of the estate: what each model is for, who built it, and what a new builder must know."},
+    {"key": "improve", "workspace": "caldergate-demo", "feature": "The review: ranked findings, Planual-tagged, with decisions already made on the cards", "text": "What should we fix first in FP&A, and what has already been decided?"},
+    {"key": "implications", "workspace": "caldergate-demo", "feature": "Reach of a change", "text": "What are the implications of changing SYS05 FX Rates?"},
+    {"key": "documents", "workspace": "caldergate-demo", "feature": "Documents tied to objects at ingestion", "text": "What do the project documents say about CAL03 Opex?"},
+    {"key": "not-recorded", "workspace": "caldergate-demo", "feature": "It says when it does not know", "text": "Why is the margin module called CAL04 Margn?"}
   ]
 }

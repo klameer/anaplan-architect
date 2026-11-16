@@ -35,6 +35,9 @@ wrote the reason down.
 Free, MIT licensed, by [CodelessOps](https://codelessops.com). Yours to run, on your own machine, with your own
 model key.
 
+Last security review: `408cf35`, 2026-11-13. Commits after it have not been reviewed: see
+[the review log](docs/SECURITY-REVIEWS.md).
+
 ## Six questions it answers
 
 <table>
@@ -280,7 +283,7 @@ given a summary and tools, and pulls only what a question needs.
 | | |
 |---|---|
 | [Workspaces and logins](docs/features/workspaces-and-logins.md) | [Documents](docs/features/documents.md) |
-| [The line-item index](docs/features/line-item-index.md) | [The five answer patterns](docs/features/answer-patterns.md) |
+| [The line-item index](docs/features/line-item-index.md) | [The answer patterns](docs/features/answer-patterns.md) |
 | [Build plans](docs/features/build-plans.md) | [Concise and Full](docs/features/concise-and-full.md) |
 | [The context budget and context view](docs/features/context.md) | [The run timeline](docs/features/run-timeline.md) |
 | [The validator](docs/features/validator.md) | [Tracing](docs/features/tracing.md) |

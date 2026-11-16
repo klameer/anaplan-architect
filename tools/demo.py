@@ -2,6 +2,8 @@
 
   python tools/demo.py reset                      write the two demo workspaces afresh (the same state every time)
   python tools/demo.py run [--only KEY ...]       ask the scripted questions, print a verdict table, write out/demo-run.json
+  python tools/demo.py run --set showcase         the eight showcase questions instead, one feature each (examples/caldergate/demo.json, "showcase"); writes
+                                                  out/demo-run-showcase.json with each answer's text, word count and what it read
   python tools/demo.py ask "question" [--mode concise] [--estate ID]
 
 `run` exits 1 unless every answer's verdict is clean. docs/WALKTHROUGH.md uses all three.
@@ -80,14 +82,15 @@ def ask(base: str, eid: str, question: str, mode: str, brief: bool = False) -> t
     return t, c["id"]
 
 
-def run(base: str, only: list[str]) -> int:
+def run(base: str, only: list[str], qset: str = "") -> int:
     info = call(base, "/api/demo")
     if not info["available"]:
         raise SystemExit("the demo files are not installed with this server")
     if not all(w["present"] for w in info["workspaces"]):
         raise SystemExit("the demo workspaces are not there: python tools/demo.py reset")
     rows, record = [], {}
-    for q in info["questions"]:
+    questions = info["questions"] if not qset else json.loads((ROOT / "examples" / "caldergate" / "demo.json").read_text(encoding="utf-8"))[qset]
+    for q in questions:
         if only and q["key"] not in only:
             continue
         ws = next((w["id"] for w in info["workspaces"] if w.get("key") == q["workspace"]), q["workspace"])    # this login's copy of the demo workspace
@@ -96,8 +99,15 @@ def run(base: str, only: list[str]) -> int:
         record[q["key"]] = {"conversation": cid, "workspace": ws, "turn": t.get("id"), "kind": t["kind"], "mode": t["mode"], "clean": bool(v.get("clean")), "question": q["text"],
                             "context": t["context"]["total"], "budget": t["context"]["budget"], "seconds": t["run"]["seconds"], "tools": [s["name"] for s in t["run"]["steps"] if s["kind"] == "tool"],
                             "blocks": [b["type"] for b in t["blocks"]], "moment": q.get("moment")}
+        if qset:                                              # the answer itself, and what it read beyond the exports
+            ctx = t["context"]["items"]
+            record[q["key"]] |= {"feature": q.get("feature"), "edit": t.get("edit"), "answer": t["a"], "words": len(t["a"].split()), "verification": v,
+                                 "documents": sorted({p["document"] for b in t["blocks"] if b["type"] == "passages" for p in b["items"]}),
+                                 "notes": [n.get("title") for b in t["blocks"] if b["type"] == "notes" for n in b["items"]],
+                                 "context": [{"kind": i["kind"], "label": i["label"], "tokens": i["tokens"]} for i in ctx],
+                                 "steps": [{"name": s["name"], "kind": s["kind"]} for s in t["run"]["steps"]], "blocks_full": t["blocks"]}
         rows.append((q["key"], t["kind"], t["mode"], "clean" if v.get("clean") else "FLAGGED", t["context"]["total"], t["run"]["seconds"]))
-    out = ROOT / "out" / "demo-run.json"
+    out = ROOT / "out" / ("demo-run.json" if not qset else f"demo-run-{qset}.json")
     out.parent.mkdir(exist_ok=True)
     prev = json.loads(out.read_text(encoding="utf-8")) if out.exists() and only else {}
     out.write_text(json.dumps({**prev, **record}, indent=1), encoding="utf-8")
@@ -117,6 +127,7 @@ if __name__ == "__main__":
     ap.add_argument("--estate", default=DEMO)
     ap.add_argument("--mode", default="full")
     ap.add_argument("--only", nargs="*", default=[])
+    ap.add_argument("--set", default="", help="a named set of questions from the demo manifest, such as showcase")
     ap.add_argument("--base", default="http://localhost:8765")
     ap.add_argument("--user", help="sign in first (a server with logins)"); ap.add_argument("--password")
     a = ap.parse_args()
@@ -128,6 +139,6 @@ if __name__ == "__main__":
         for w in r["workspaces"]:
             print(f"{w['name']}: {w['models']} model(s), {w['documents']} document(s)  [{w['id']}]")
     elif a.cmd == "run":
-        sys.exit(run(a.base, a.only))
+        sys.exit(run(a.base, a.only, a.set))
     else:
         ask(a.base, a.estate, a.question, a.mode)

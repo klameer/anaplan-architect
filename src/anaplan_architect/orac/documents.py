@@ -253,7 +253,10 @@ def _doc(db: Db, r: dict) -> dict:
         "AND c.object_ref IN (SELECT id FROM doc_sections WHERE document_id=?) GROUP BY c.object_ref", r["id"])}
     answers = db.one("SELECT COUNT(DISTINCT c.owner_id) AS n FROM citations c WHERE c.kind='document' AND c.owner_kind='turn' "
                      "AND c.object_ref IN (SELECT id FROM doc_sections WHERE document_id=?)", r["id"])["n"]
-    return dict(r, sections=[dict(s, cited=cited.get(s["id"], {}).get("answers", 0)) for s in secs], objects=objs,
+    names: dict[str, list[str]] = {}
+    for x in db.q("SELECT o.section_id, o.ref FROM doc_section_objects o JOIN doc_sections s ON s.id=o.section_id WHERE s.document_id=? ORDER BY o.ref", r["id"]):
+        names.setdefault(x["section_id"], []).append(x["ref"])
+    return dict(r, sections=[dict(s, cited=cited.get(s["id"], {}).get("answers", 0), names=names.get(s["id"], [])) for s in secs], objects=objs,
                 tokens=sum(s["tokens"] for s in secs), sections_cited=len(cited), answers=answers)
 
 
@@ -428,6 +431,31 @@ def search(db: Db, eid: str, query: str = "", objects: list[str] | None = None, 
             "matched": len(hits), "sections_in_workspace": total}
 
 
+def about(db: Db, eid: str, ref: str, model: str | None = None, limit: int = 24) -> dict:
+    """The link made when each document was read in, followed from the object's side: every section that names this
+    module or line item (a module also through any of its line items), oldest document first, each with the objects it
+    names and the words around the mention. `named_in` is the line the page shows on the object."""
+    ref = (ref or "").strip().strip("'")
+    args: list = [eid, ref, ref + ".%"]
+    sql = ("SELECT DISTINCT s.id, s.heading, s.seq, s.tokens, s.text, d.id AS doc_id, d.title, d.doc_type, d.doc_date, d.uploaded_at FROM doc_section_objects o "
+           "JOIN doc_sections s ON s.id=o.section_id JOIN documents d ON d.id=s.document_id WHERE d.estate_id=? AND (lower(o.ref)=lower(?) OR lower(o.ref) LIKE lower(?))")
+    if model:
+        sql += " AND o.model=?"; args.append(model)
+    rows = db.q(sql + " ORDER BY COALESCE(d.doc_date, d.uploaded_at), d.uploaded_at, s.seq LIMIT ?", *args, limit)
+    out = []
+    short = ref.split(".")[-1].lower()
+    for r in rows:
+        names = [x["ref"] for x in db.q("SELECT ref FROM doc_section_objects WHERE section_id=? ORDER BY ref", r["id"])]
+        i = r["text"].lower().find(short)
+        snip = re.sub(r"\s+", " ", r["text"][max(0, i - 110): i + 190]).strip() if i >= 0 else re.sub(r"\s+", " ", r["text"][:260])
+        out.append({"section": r["id"], "document": r["title"], "document_id": r["doc_id"], "type": r["doc_type"], "date": r["doc_date"], "heading": r["heading"] or "",
+                    "tokens": r["tokens"], "names": names, "snippet": snip[:320]})
+    docs = len({x["document_id"] for x in out})
+    n = len(out)
+    line = "named in no document" if not n else f"named in {n} section{'s' if n != 1 else ''} of {docs} document{'s' if docs != 1 else ''}"
+    return {"object": ref, "sections": out, "documents": docs, "named_in": line}
+
+
 def totals(db: Db, eid: str) -> dict:
     r = db.one("SELECT COUNT(DISTINCT d.id) AS documents, COUNT(s.id) AS sections, COALESCE(SUM(s.tokens),0) AS tokens FROM documents d "
                "LEFT JOIN doc_sections s ON s.document_id=d.id WHERE d.estate_id=?", eid)
@@ -487,7 +515,8 @@ def quote_in(quote: str, text: str) -> bool:
 
 def _quoted(flat: str) -> list[tuple[int, str, str]]:
     """Every quoted span of a paragraph as (position, text, how): double quotes paired properly, then single-quoted
-    and italic passages. Code spans are left out first: a name in backticks is not a quotation.
+    and italic passages. Code spans are blanked while the quote marks are paired (a name in backticks is not a quotation,
+    and a quote mark inside one opens nothing); a double-quoted passage is then taken as written, names and all.
     Straight double quotes pair off in order (first opens, second closes); a curly opening quote runs to the next
     closing mark. So a short quoted word before a passage can no longer shift which marks belong together."""
     text = re.sub(r"`[^`\n]*`", lambda m: " " * len(m.group(0)), flat)
@@ -501,7 +530,7 @@ def _quoted(flat: str) -> list[tuple[int, str, str]]:
                 j += 1
             if j < n and text[j] != "\n":
                 if 0 < j - i - 1 <= MAX_QUOTE:
-                    out.append((i, text[i + 1:j], "double")); taken.append((i, j))
+                    out.append((i, flat[i + 1:j], "double")); taken.append((i, j))        # as written: a name in backticks inside a quotation is part of it
                 i = j + 1
                 continue
         i += 1

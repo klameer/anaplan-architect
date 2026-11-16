@@ -51,6 +51,7 @@ The admin is created once, on first start. The admin creates every other login f
 | `ARCHITECT_DEFAULT_CAP_USD` | The spend cap a new login starts with (default 2.00) |
 | `ARCHITECT_MAX_UPLOAD_MB` | The most one request may carry (default 200) |
 | `ARCHITECT_CONTEXT_BUDGET` | Tokens of context for one answer (default 32,000) |
+| `ARCHITECT_EDIT_PASS=0` | Turn the editing pass off for the whole instance (see [Tight answers](tight-answers.md)) |
 | `ARCHITECT_MAX_CHATS_PER_LOGIN` | Answers one login may have in flight at once (default 2) |
 | `ARCHITECT_MAX_CHATS` | Answers in flight on the whole instance (default 16) |
 | `ARCHITECT_MAX_EXPORT_READS` | Sets of exports read at once (default 2); `ARCHITECT_EXPORT_WAIT_S` is how long an upload waits for a turn (default 20) |

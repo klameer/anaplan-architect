@@ -1383,7 +1383,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             p = json.loads(raw) if raw else {}
         except ValueError:
             p = {}
-        out = {"answer_mode": p.get("answer_mode") if p.get("answer_mode") in ("full", "concise") else "full"}
+        out = {"answer_mode": p.get("answer_mode") if p.get("answer_mode") in ("full", "concise") else "full",
+               "edit_pass": p.get("edit_pass") is not False}      # a long answer is cut by an editing pass unless this login turned that off
         if p.get("trace_level") in TRACE_LEVELS:          # only when this login chose one: with the time it did
             out |= {"trace_level": p["trace_level"], "trace_level_at": p.get("trace_level_at")}
         return out
@@ -1430,6 +1431,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         p = _prefs(request)
         if body.get("answer_mode") in ("full", "concise"):
             p["answer_mode"] = body["answer_mode"]
+        if isinstance(body.get("edit_pass"), bool):
+            p["edit_pass"] = body["edit_pass"]
         if "trace_level" in body:                         # a login's own choice, for its own turns only: there is no way to name another login here
             if body["trace_level"] not in TRACE_LEVELS:
                 raise HTTPException(400, f"trace_level must be one of {', '.join(TRACE_LEVELS)}")
@@ -1470,6 +1473,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise
         try:
             sess.trace_level = _trace_level_of(user)      # read now, for this turn: a change in Settings applies from the next question
+            sess.edit_pass = _prefs_of(user).get("edit_pass") is not False
             sess.ask(text, mode)
         except HTTPException:
             raise
@@ -1498,10 +1502,12 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise
 
         level = _trace_level_of(uid)
+        tighten = _prefs_of(uid).get("edit_pass") is not False
 
         def gen():
             try:
                 sess.trace_level = level
+                sess.edit_pass = tighten
                 for ev in sess.ask_stream(text, mode):
                     if ev["type"] == "tool" and ev.get("args") is None:
                         continue                      # the start event; the full one follows with args
@@ -1827,6 +1833,10 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 out["object"]["axes"] = axes
             if kind in ("line_item", "module") and obj.get("model"):
                 out["object"]["plan"] = _plan_mentions(eid, sid, obj["model"], obj["ref"], kind)
+                try:                                     # the sections of the project documents that name it: the link made when each document was read in
+                    out["object"]["documents"] = docsmod.about(db, eid, obj["ref"], obj["model"])
+                except Exception:
+                    out["object"]["documents"] = None
             row_kind = objmod.ROW_KIND.get(kind)
             if row_kind and obj.get("model"):
                 key = (obj["module"], obj["name"]) if kind == "line_item" else obj["ref"]

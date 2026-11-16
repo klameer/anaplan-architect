@@ -48,6 +48,19 @@ function ExportRowView({ r }: { r: ExportRow }) {
 
 const Sev = ({ s }: { s: string }) => <span className={'pill ' + (s === 'critical' || s === 'major' ? 'off' : s === 'minor' ? 'amber' : 'dim')}>{s}</span>
 
+/** On an object: the sections of the project documents that name it. The link was made when each document was read in. */
+function NamedIn({ d }: { d: any }) {
+  const { openEvidence, idx } = useApp()
+  const [open, setOpen] = useState(false)
+  const secs: any[] = d.sections || []
+  if (!secs.length) return <div className="small muted" data-named-in="0" style={{ margin: '0 0 10px' }}>Named in no project document.</div>
+  return <div className="ds-namedin" data-named-in={secs.length}>
+    <button className="h" onClick={() => setOpen(x => !x)} aria-expanded={open}><span className="ds-tag ok">documents</span><b>{d.named_in[0].toUpperCase() + d.named_in.slice(1)}</b><span className="dim">{open ? 'hide' : 'show'}</span></button>
+    {open && <div className="l">{secs.map(s => <div className="r" key={s.section} role="button" tabIndex={0} onClick={() => openEvidence({ ref: s.section, kind: 'document' })}>
+      <div><b>{s.document}</b>{s.heading ? ' · ' + s.heading : ''}<span className="dim"> · {s.date || 'undated'}</span></div><div className="sn">{s.snippet}</div></div>)}</div>}
+  </div>
+}
+
 function Body({ e, idx }: { e: Evidence; idx: NameIndex }) {
   const { route, openEvidence } = useApp()
   const o = e.object || {}
@@ -71,6 +84,7 @@ function Body({ e, idx }: { e: Evidence; idx: NameIndex }) {
     </>
   }
   if (e.kind === 'line_item') return <>
+    {o.documents && <NamedIn d={o.documents} />}
     <h3>Formula</h3>
     {o.formula ? <pre>{o.formula}</pre> : <div className="small muted">No formula: an input, or an import target.</div>}
     {o.parse_error && <div className="warn">The grammar could not parse this formula: {o.parse_error}</div>}
@@ -99,6 +113,7 @@ function Body({ e, idx }: { e: Evidence; idx: NameIndex }) {
     <PlanMentions plan={o.plan} />
   </>
   if (e.kind === 'module') return <>
+    {o.documents && <NamedIn d={o.documents} />}
     <KV rows={[['Model', <CiteChip c={chip({ ref: m || '', id: null }, 'model', m, sid)} idx={idx} />], ['Functional area', o.functional_area], ['Applies to', o.applies_to?.length ? o.applies_to.join(', ') + (o.dims_inferred ? ' (inferred from its line items; no Modules export)' : '') : ''],
       ['Time scale', o.time_scale], ['Versions', o.versions], ['Cells', o.cells ? fmtN(o.cells) : ''], ['Notes', o.notes]]} />
     {m && <div className="small" style={{ marginTop: 8 }}><a href={depsHref(route.eid || e.estate, m, e.ref)}>Explore its dependencies: reach, actions, graph →</a></div>}

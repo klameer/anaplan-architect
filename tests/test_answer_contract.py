@@ -6,7 +6,7 @@ from anaplan_architect.chat import CHAT_SYSTEM
 
 
 def test_the_prompt_asks_for_a_brief_then_folded_sections():
-    assert "## Brief" in CHAT_SYSTEM and "three to five sentences" in CHAT_SYSTEM
+    assert "## Brief" in CHAT_SYSTEM and "at most three sentences" in CHAT_SYSTEM and "250 words" in CHAT_SYSTEM
     assert "every other section closed under its heading" in CHAT_SYSTEM
     assert "A short question gets a Brief and nothing else" in CHAT_SYSTEM
     # the renderer folds on `##`, so the contract must not ask for any other heading level at the top

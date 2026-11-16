@@ -69,7 +69,7 @@ export function BuildOrder({ plan }: { plan: BuildPlan }) {
   )
 }
 
-type Step = { n: number; kind: 'list' | 'module' | 'open' | 'line_item' | 'change' | 'check'; text: string; module?: string; item?: string; formula?: string; old_formula?: string; note?: string }
+type Step = { n: number; kind: 'list' | 'module' | 'open' | 'line_item' | 'change' | 'check' | 'supply'; text: string; module?: string; item?: string; formula?: string; old_formula?: string; note?: string }
 
 /** The numbered instructions of a plan stored before the server wrote them (answers from before the change). */
 function stepsOf(plan: BuildPlan): Step[] {
@@ -113,14 +113,15 @@ export function PlanBlock({ plan, full, onAsk, turn }: { plan: BuildPlan; full: 
   const stepKey = <div className="ds-stepkey" aria-label="What the colour of a step number means">
     {has(['list', 'module', 'open', 'line_item']) && <span><i className="build" />build something new</span>}
     {has(['change']) && <span><i className="change" />change something that exists: the switch-over</span>}
+    {has(['supply']) && <span><i className="supply" />you supply: the plan cannot know it</span>}
     {has(['check']) && <span><i className="check" />check, nothing is built</span>}</div>
   const stepList = <><div>{stepKey}</div><ol className="ds-steplist">{steps.map(s => { const note = noteOf(s); return <li key={s.n} className={'st ' + s.kind}>
     <span className="num">{s.n}</span>
     <div className="body">
       <div className="tx">{s.kind === 'check' ? <><span className="ds-tag">check</span> <Markdownish text={s.text} /></> : s.text}</div>
-      {s.kind === 'change' && <div className="swap"><div><span className="k">from</span>{s.old_formula ? <Formula f={s.old_formula} fresh={fresh} /> : <span className="ds-f in">no formula</span>}</div><div><span className="k">to</span><Formula f={s.formula || ''} fresh={fresh} /></div></div>}
+      {s.kind === 'change' && <Swap from={s.old_formula || ''} to={s.formula || ''} fresh={fresh} />}
       {s.kind === 'line_item' && s.formula && <div className="fx"><Formula f={s.formula} fresh={fresh} /></div>}
-      {s.kind !== 'check' && s.kind !== 'list' && <><button className="ds-aff" onClick={() => note ? setOpen(o => ({ ...o, [s.n]: !o[s.n] })) : onAsk?.(`Explain step ${s.n} of the plan: ${s.text}`)}>explain</button>
+      {s.kind !== 'check' && s.kind !== 'list' && s.kind !== 'supply' && <><button className="ds-aff" onClick={() => note ? setOpen(o => ({ ...o, [s.n]: !o[s.n] })) : onAsk?.(`Explain step ${s.n} of the plan: ${s.text}`)}>explain</button>
         {open[s.n] && note && <div className="ds-open"><div className="ex">{note}</div></div>}</>}
     </div></li> })}</ol></>
   const quiet = <div className="ds-quiet">order checked: nothing is built before what it refers to · {c.parsed} of {c.formulas} formulas are valid Anaplan syntax · every name they use is in the model or built by this plan
@@ -134,6 +135,7 @@ export function PlanBlock({ plan, full, onAsk, turn }: { plan: BuildPlan; full: 
     {quiet}
   </div>
   const items = plan.modules.reduce((n, m) => n + m.items.length, 0), changes: any[] = (plan as any).changes || []
+  const supply: any[] = (plan as any).supply || [], pl: any = (plan as any).planual
   return <>
     <Sec2 k="What you will build" ct={`${plan.modules.length} module${plan.modules.length !== 1 ? 's' : ''}, ${items} line item${items !== 1 ? 's' : ''}${changes.length ? `, ${changes.length} existing formula${changes.length !== 1 ? 's' : ''} changed` : ''} · in ${plan.model}`} />
     {plan.modules.map(m => <div className="ds-mod" key={m.name}>
@@ -143,14 +145,20 @@ export function PlanBlock({ plan, full, onAsk, turn }: { plan: BuildPlan; full: 
       <div className="lih">{m.items.length} line item{m.items.length !== 1 ? 's' : ''} to {m.state === 'new' ? 'build' : 'add'}</div>
       <table><thead><tr><th style={{ width: '19%' }}>Line item</th><th style={{ width: '9%' }}>Format</th><th style={{ width: '17%' }}>Dimensions</th><th style={{ width: '8%' }}>Summary</th><th>Formula</th></tr></thead>
         <tbody>{m.items.map(i => <tr key={i.name}><td className="li-n">{i.name}</td><td className="dim">{i.format}</td><td className="dim">{((i as any).applies_to || m.applies_to).join(', ') || 'none'}</td><td className="dim">{i.summary || 'None'}</td>
-          <td><Formula f={i.formula} fresh={fresh} />{i.formula && <span className="ds-valid" title="This formula is valid Anaplan syntax and every name in it exists or is built by this plan">✓ valid</span>}</td></tr>)}</tbody></table>
+          <td><Formula f={i.formula} fresh={fresh} />{i.formula && <span className="ds-valid" title="This formula is valid Anaplan syntax and every name in it exists or is built by this plan">✓ valid</span>}<Flags flags={(i as any).flags} /></td></tr>)}</tbody></table>
     </div>)}
     {changes.map(ch => <div className="ds-mod chg" key={ch.module + ch.name}>
       <div className="mh"><span className="step">↺</span><span className="n">{ch.module}.{ch.name}</span><span className="ds-tag">existing formula changed</span></div>
       {ch.note && <Purpose text={ch.note} />}
-      <div className="swap"><div><span className="k">from</span>{ch.old_formula ? <Formula f={ch.old_formula} fresh={fresh} /> : <span className="ds-f in">no formula</span>}</div>
-        <div><span className="k">to</span><Formula f={ch.formula} fresh={fresh} /><span className="ds-valid">✓ valid</span></div></div>
+      <Swap from={ch.old_formula} to={ch.formula} fresh={fresh} />
+      <Flags flags={ch.flags} />
     </div>)}
+    {supply.length > 0 && <><Sec2 k="You supply" ct="what an export cannot hold" />
+      <div className="ds-supply" data-supply={supply.length}>{supply.map(s => <div className="r" key={s.slot}><span className="ds-tag mock" style={{ borderStyle: 'solid' }}>you supply</span>
+        <div><div>{s.what[0].toUpperCase() + s.what.slice(1)}: a member of the list <b>{s.list}</b>.</div>
+          <div className="dim" style={{ fontSize: 12.5 }}>An export holds no list members, so the plan cannot name it. It goes where the formula of {s.where.join(' and ')} says <code>{s.slot}</code>.</div></div></div>)}</div></>}
+    {pl && (pl.flags || []).length > 0 && <><Sec2 k="Planual flags" ct={`${pl.departs} depart${pl.departs !== 1 ? '' : 's'} · ${pl.as_per} as per · flags only`} />
+      <div className="ds-quiet" data-planual={pl.departs}>{pl.note}</div></>}
     <Sec2 k="What already exists that this uses" ct="click a name to open it" />
     {existing}
     <Sec2 k="Steps" ct={`${steps.length} · follow them in order in Anaplan`} />
@@ -160,6 +168,30 @@ export function PlanBlock({ plan, full, onAsk, turn }: { plan: BuildPlan; full: 
     {diagram && <div style={{ marginTop: 8 }}>{figure}</div>}
     {turn && <div className="ds-foot" style={{ border: 0, marginTop: 10, paddingTop: 0 }}><span>Take the plan with you:</span><a href={`/api/turns/${turn}/plan?format=md`} target="_blank" rel="noreferrer"><button>Markdown</button></a><a href={`/api/turns/${turn}/plan?format=csv`}><button>CSV, one row per line item</button></a></div>}
   </>
+}
+/** A changed formula. When most of it stays as it was (a branch added to a long chain), only what changes is shown,
+ * with a little of what is around it; the whole formulas are one click away. A short formula is shown whole. */
+function Swap({ from, to, fresh }: { from: string; to: string; fresh: Set<string> }) {
+  const [whole, setWhole] = useState(false)
+  let p = 0; while (p < from.length && p < to.length && from[p] === to[p]) p++
+  let q = 0; while (q < from.length - p && q < to.length - p && from[from.length - 1 - q] === to[to.length - 1 - q]) q++
+  const compact = !whole && from && (p + q) > 160 && (to.length - p - q) < to.length * 0.6
+  if (!compact) return <div className="swap"><div><span className="k">from</span>{from ? <Formula f={from} fresh={fresh} /> : <span className="ds-f in">no formula</span>}</div>
+    <div><span className="k">to</span><Formula f={to} fresh={fresh} /><span className="ds-valid">✓ valid</span>{whole && <> <button className="ds-aff" onClick={() => setWhole(false)}>only what changes</button></>}</div></div>
+  const cut = (s: string, n: number, end: boolean) => { if (s.length <= n) return s; const t = end ? s.slice(-n) : s.slice(0, n); return end ? '… ' + t.slice(t.indexOf(' ') + 1) : t.slice(0, t.lastIndexOf(' ')) + ' …' }
+  const before = cut(from.slice(0, p), 90, true), after = cut(from.slice(from.length - q), 90, false)
+  const gone = from.slice(p, from.length - q), added = to.slice(p, to.length - q)
+  return <div className="swap diff" data-swap="diff">
+    <div><span className="k">adds</span><span className="ds-f"><span className="ctx">{before}</span>{gone && <del>{gone}</del>}<mark>{added}</mark><span className="ctx">{after}</span></span><span className="ds-valid" title="The whole new formula is valid Anaplan syntax and every name in it exists or is built by this plan">✓ valid</span></div>
+    <div className="dim" style={{ fontSize: 12 }}>The rest of the formula stays as it is ({from.length.toLocaleString()} characters). <button className="ds-aff" onClick={() => setWhole(true)}>show the whole formula, before and after</button></div>
+  </div>
+}
+/** Advisory Planual flags on one planned line item: a departure first, then what it does as a rule asks. Numbers and the
+ * tool's own words only. A flag never rejects a plan. */
+function Flags({ flags }: { flags?: any[] }) {
+  if (!flags || !flags.length) return null
+  return <div className="ds-pflags">{flags.map((f, i) => <div key={i} className={'pf ' + f.state} data-planual-flag={f.state}>
+    <span className={'ds-tag ' + (f.state === 'departs' ? 'mock' : 'ok')} style={f.state === 'departs' ? { borderStyle: 'solid' } : undefined}>{f.label}</span><span className="why">{f.why}</span></div>)}</div>
 }
 /** A module's purpose: its first sentence, the rest behind "more", so the line items under it stay in view. */
 function Purpose({ text }: { text: string }) {

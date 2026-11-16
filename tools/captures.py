@@ -4,6 +4,8 @@ Caldergate demo workspaces, with a manifest. One command regenerates all of it.
   .venv/Scripts/python tools/captures.py --user admin --password ... [--base http://localhost:8768]
         [--prepare]        first write the demo afresh, make two demo logins and ask the scripted questions (about ten minutes of model time)
         [--only stills|clips]   [--docs]   also copy the stills the README and docs use into docs/img/ (tracked, small)
+        [--showcase]       ask the eight showcase questions (examples/caldergate/demo.json, "showcase") as this login, then
+        [--only showcase]  take only their stills, leaving every other still and clip as it is: showcase-<n>-<key>-<part>-<frame>.png
 
   out/captures/stills/<feature>-<shot>-desktop.png     1600 x 1000
   out/captures/stills/<feature>-<shot>-4x5.png         1080 x 1350, framed so a 4:5 crop loses nothing
@@ -97,20 +99,27 @@ def prepare(base: str, user: str, password: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8768"); ap.add_argument("--user", default="admin"); ap.add_argument("--password", required=True)
-    ap.add_argument("--prepare", action="store_true"); ap.add_argument("--only", choices=["stills", "clips"]); ap.add_argument("--docs", action="store_true")
+    ap.add_argument("--prepare", action="store_true"); ap.add_argument("--only", choices=["stills", "clips", "showcase"]); ap.add_argument("--showcase", action="store_true"); ap.add_argument("--docs", action="store_true")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     if a.prepare:
         prepare(a.base, a.user, a.password)
+    if a.showcase:                                    # the eight showcase questions, asked as this login on the capture store
+        import demo as d
+        d.call(a.base, "/api/auth/login", "POST", {"email": a.user, "password": a.password})
+        if (d.call(a.base, "/api/auth/me").get("trace") or {}).get("available"):
+            d.call(a.base, "/api/prefs", "PUT", {"trace_level": "off"})
+        d.run(a.base, [], "showcase")
+    show_only = a.only == "showcase"
     from playwright.sync_api import sync_playwright
     stills, clips = OUT / "stills", OUT / "clips"
-    if a.only != "clips":
+    if a.only not in ("clips", "showcase"):
         shutil.rmtree(stills, ignore_errors=True)
-    if a.only != "stills":
+    if a.only not in ("stills", "showcase"):
         shutil.rmtree(clips, ignore_errors=True)
     stills.mkdir(parents=True, exist_ok=True); clips.mkdir(parents=True, exist_ok=True)
     old = json.loads((OUT / "manifest.json").read_text(encoding="utf-8")) if (OUT / "manifest.json").exists() else []
-    manifest: list[dict] = [m for m in old if a.only and m["kind"] != a.only.rstrip("s")]
+    manifest: list[dict] = ([m for m in old if m.get("feature") != "showcase"] if show_only else [m for m in old if a.only and m["kind"] != a.only.rstrip("s")])
     missed: list[str] = []
 
     with sync_playwright() as pw:
@@ -191,6 +200,20 @@ def main() -> int:
             S("bert", "not-found", f"e/{cg}/no-such-page"), S("bert", "empty-documents", f"e/{st}/documents"), S("bert", "workspace-ask", f"e/{cg}", scroll=".ds-askrow"),
         ]
 
+        # the showcase set: one feature per question; the top of the answer (the feature at a glance), then the feature itself
+        PARTS = {"why": [("passage", ".ds-src")], "calculated": [("parts", ".ds-calc"), ("trace", ".ds-trace")], "plan": [("plan", ".ds-mod"), ("supply", ".ds-supply")],
+                 "overview": [("map", ".ds-fig")], "improve": [("cards", ".ds-card"), ("kept", ".ds-kept")], "implications": [("rings", ".ds-fig")],
+                 "documents": [("links", ".ds-doclinks")], "not-recorded": []}
+        showcase = []
+        for n, q in enumerate(json.loads((ROOT / "examples" / "caldergate" / "demo.json").read_text(encoding="utf-8")).get("showcase") or [], 1):
+            c = chat(q["text"][:70])
+            if c is None:
+                continue
+            showcase.append(S("showcase", f"{n}-{q['key']}-answer", at(c), q["text"], note=q.get("feature", "")))
+            for part, sel in PARTS.get(q["key"], []):
+                showcase.append(S("showcase", f"{n}-{q['key']}-{part}", at(c), q["text"], scroll=sel, note=q.get("feature", "")))
+        shots = showcase if show_only else shots + showcase
+
         held: list = []          # requests the tool is holding back for a frame: answered by the tool afterwards, never let through to the server
 
         def release():
@@ -259,7 +282,7 @@ def main() -> int:
                             pass
                 ctx.close()
             # the sign-in page, signed out
-            for frame, (w, h, scale) in FRAMES.items():
+            for frame, (w, h, scale) in ({} if show_only else FRAMES).items():
                 ctx = context(w, h, scale); page = ctx.new_page()
                 page.goto(a.base + "/app/?capture=1", wait_until="networkidle"); page.wait_for_timeout(800)
                 if page.locator(".ds-auth").count():
@@ -323,7 +346,7 @@ def main() -> int:
         def scroll_to(page, sel, pause=900):
             page.locator(sel).first.evaluate("el => { const m = document.querySelector('.ds-main'); m.scrollTo({ top: el.getBoundingClientRect().top + m.scrollTop - 90, behavior: 'smooth' }) }"); page.wait_for_timeout(pause)
 
-        if a.only != "stills":
+        if a.only not in ("stills", "showcase"):
             def ask(page):
                 open_(page, f"e/{cg}/chat/new")
                 page.evaluate("document.querySelector('.ds.app')?.classList.add('asking')")          # this clip is about asking: the composer shows, and the rest of capture mode holds

@@ -342,6 +342,12 @@ docker compose up --build
   `--docs`, the images the README and the feature pages use, copied into `docs/img/`.
 - Capture mode (`?capture=1`) hides the signed-in name, the provider line and the server's data folder.
 - **Run**: 78 stills and 6 clips, nothing missed.
+- **The showcase set**: `--showcase --only showcase` asks the eight showcase questions (one feature each:
+  cited documents, the grammar, a build plan with Planual flags, the model map, the review, the reach of a change,
+  documents tied to objects, Not recorded) as the capture login, then takes only their stills and leaves every other
+  still and clip as it is: `showcase-<n>-<key>-answer` is the top of the answer, the others are the feature itself
+  (`-passage`, `-parts`, `-trace`, `-plan`, `-supply`, `-map`, `-cards`, `-kept`, `-rings`, `-links`). `--only
+  showcase` alone retakes the frames without asking again. Run on 2026-11-16: 8 of 8 clean, 36 stills.
 
 ## 24. Bert, and the name
 
@@ -363,6 +369,79 @@ docker compose up --build
   to each place, saves a still under `out/bert/`, and opens every answer in the demo workspaces to confirm he is in
   none of them. 51 checks passed; 14 stills.
 
+## 25. A tight answer, and what it read beyond the exports
+
+- **Do**: `python tools/demo.py run --set showcase --only implications` (or ask *What are the implications of
+  changing SYS05 FX Rates?* in Full).
+- **See**: a lead of at most three sentences; under it the line **Beyond the exports**, *Read 2 of 6 documents and
+  6 owner notes*, with a chip per document and per cited note that opens the source, and *+N not cited* for the notes
+  handed over and not used; then the reach rings; then short bulleted sections. No list of the modules the rings
+  already show.
+- **See the edit**: open *context* under the answer. The run timeline has an `edit` step straight before the
+  validator: `794 → 239 words` on the run this entry was written from.
+- **Turn it off**: Settings, *Editing pass*, Off; ask again: no `edit` step, the answer is the draft.
+- **The guard**: `tests/test_tight.py` gives the editor an edit that adds a made-up line item and a figure: the draft
+  stands and the timeline says `draft kept:` with the reason.
+- **Limited**: a new claim in plain words, with no name, figure or quote in it, is not something code can see.
+
+## 26. How something is calculated
+
+- **Do**: ask *How is the depreciation charge calculated?* in Caldergate Distribution Group (Full), or
+  `python tools/demo.py run --set showcase --only calculated`.
+- **See**: the kind is **Calculation**. Under a lead of two or three sentences, **How it is calculated**:
+  `CAL10 Depreciation.Charge` with its functions (ISBLANK, MOVINGSUM) and seven rows, IF, five ELSE IF and ELSE, each
+  with its condition and its result. Every `INP04 Capex` name is a chip: click one and the object opens.
+- **See**: **Where it comes from**: three inputs on the left joined to the charge on the right, and the caption
+  *3 line items upstream, 3 of them inputs, 1 step deep*.
+- **See**: the words say what the picture does not: a useful life above ten years is treated as 240 months whatever was
+  entered, and any other life falls back to this month's spend over 12. The owner's note (correct, long, do not touch
+  without the schedule) is cited.
+- **Concise**: the branches are shown; *show diagram* opens the trace.
+- **Limited**: the trace draws the nearest 36 line items up to four steps; the caption says when there are more.
+
+## 27. A plan from a change request, the slot you supply, and Planual flags
+
+- **Do**: ask *Build what change request CR-031 asks for: a legal fees driver in the opex forecast.* (Full), or
+  `python tools/demo.py run --set showcase --only plan`.
+- **See**: a **Build plan**, not a question back. The lead says it reuses the existing
+  `INP02 Opex Drivers.Legal Fees` and adds its branch to `CAL03 Opex.Forecast Opex`, with no new module.
+- **See**: under the changed formula, **You supply**: *The legal fees account: a member of the list Accounts*, and in
+  the formula `Accounts.'YOU SUPPLY: the legal fees account'`. It is step 1, in amber.
+- **See**: under the changed formula, the flags: `Departs from Planual 2.02-01, 2.02-02`, *13 IF THEN ELSE in one
+  formula*, and `As per Planual 2.01-09, 2.02-12`. The plan is shown all the same: a flag rejects nothing. The answer
+  says the long chain is deliberate and cites the owner's note.
+- **Do**: ask *What should we fix first in FP&A, and what has already been decided?*
+- **See**: each card has a tag with its rule numbers, or `the tool's own test`. The card on `CAL05 Opex OLD` says
+  **kept on purpose** with the owner's note, which opens.
+- **Limited**: 18 rule numbers across 24 checks: what an export can show. It does not check the Planual.
+
+## 28. Documents tied to objects, both ways
+
+- **Do**: ask *What do the project documents say about CAL03 Opex?* (Full), or
+  `python tools/demo.py run --set showcase --only documents`.
+- **See**: the kind is **Documents**. Under the lead and the *Beyond the exports* line, **Where the documents name
+  it**: `CAL03 Opex`, *named in N sections of M documents*, the sections grouped by document with the object chips
+  each section names. Click a row: the section opens.
+- **See**: the answer's quotes carry the object names inside them and are marked found.
+- **Do**: click `CAL03 Opex` anywhere. The drawer opens with *Named in N sections of M documents*; open it for the
+  list and click a section.
+- **Do**: Documents, on a card click *which sections name which objects*: each section with its chips.
+- **Limited**: the link is made by matching names in the text. A document that describes a module without naming it
+  is not linked; keyword search is the second step for that reason.
+
+## 29. Ask next
+
+- **Do**: ask *How is the depreciation charge calculated?* and look under the answer.
+- **See**: **Ask next**, three questions: *Why is CAL10 Depreciation.Charge built this way?*, *What are the
+  implications of changing CAL10 Depreciation.Charge?*, *What do the project documents say about
+  CAL10 Depreciation.Charge?*
+- **Do**: click the first. It is asked in the same chat; the answer is a **Why** with its passages, and under it a
+  new set that leads on again (a plan to change it, what a change would reach).
+- **See**: every answer has them, Concise answers too. An overview offers *What should we fix first, and what has
+  already been decided?*; a plan with departures offers *Explain the Planual flags on this plan.*
+- **Limited**: the questions come from a fixed set per kind of answer, filled with the object the answer was about.
+  They do not react to what the answer said.
+
 ## How each entry was run
 
 | Entry | How it was run |
@@ -372,6 +451,11 @@ docker compose up --build
 | 3 | the page opened in the browser; the upload itself only through the route it posts to (tests) |
 | 16 | not re-checked beyond the pages opening |
 | 17, 18 | `tools/ui_check.py` (sign-in, admin panel); creating a login through `tools/walkthrough_check.py`, not the form |
+| 29 | a question asked on a fresh store, the page opened in a real browser, the three questions read off it and the first one clicked: it was asked in the same chat; `tests/test_followups.py` |
+| 28 | `tools/demo.py run --set showcase` on a fresh store (8 of 8 clean), then on the capture store with `tools/captures.py --showcase --only showcase`; `tests/test_doclinks.py` |
+| 27 | `tools/demo.py run --set showcase --only plan improve` on a fresh store (both clean; the plan has one slot, three departures and one as-per flag); `tests/test_planual.py` |
+| 26 | `tools/demo.py run --set showcase --only calculated` on a fresh store (509 words before, 155 after, clean), the page opened in a real browser; `tests/test_calc.py` |
+| 25 | `tools/demo.py run --set showcase --only implications improve` on a fresh store (794 → 239 and 963 → 212 words, both clean); `tests/test_tight.py` |
 | 19, 20 | `tools/walkthrough_check.py`: 17 checks passed; and `tests/test_access.py` over every route |
 | 21 | not run (Docker engine); a clean install standing in for the image was run |
 | 22 | not run (no key) |

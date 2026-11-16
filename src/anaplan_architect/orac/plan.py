@@ -160,6 +160,13 @@ def assemble(db: Db, eid: str, er, snapshot_id: str | None, sel: dict | None = N
     sel = sel or deterministic(er)
     states = fstate.action_states(db, eid)
     acts = cards(er, sel, snapshot_id, states)
+    from . import planual
+    for a in acts:                                    # the rule numbers each card rests on, and what the owner has already decided about its objects
+        a["planual"], a["rule_label"] = planual.card_rules(er, a.get("finding_ids") or [])
+        try:
+            a["kept"] = planual.kept(db, eid, a["model"], a.get("objects") or [], a.get("state"), snapshot_id)
+        except Exception:
+            a["kept"] = None
     props = proposals_with_state(db, eid, er, snapshot_id, states)
     tally = {s: 0 for s in fstate.ACTION_STATES}
     for a in acts:

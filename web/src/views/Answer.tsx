@@ -15,6 +15,8 @@ const KIND: Record<string, [string, string]> = {
   overview: ['Overview', 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z'], improve: ['Improve', 'M4 18l5-6 4 3 7-9M15 6h5v5'],
   implications: ['Implications', 'M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19z'],
   count: ['Count', 'M5 20V10M10 20V4M15 20v-7M20 20v-12'],
+  documents: ['Documents', 'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6'],
+  calculation: ['Calculation', 'M5 4h14v16H5zM8 8h8M8 12h2M13 12h3M8 16h2M13 16h3'],
   general: ['Answer', 'M4 5h16v11H8l-4 4z'],
 }
 export const Icon = ({ d, s = 16 }: { d: string; s?: number }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
@@ -53,6 +55,96 @@ export function Passages({ items }: { items: Passage[] }) {
   </>
 }
 
+/** One line under the lead: what this answer read besides the exports. Each name opens its source. Computed by the server
+ * from what was read this turn (sections fetched, notes handed over), never from the answer's own words. */
+export function Beyond({ b }: { b: any }) {
+  const { openEvidence } = useApp()
+  const docs: any[] = b.documents || [], notes: any[] = b.notes || []
+  const none = !docs.length && !notes.length
+  const [all, setAll] = useState(false)
+  const used = notes.filter(n => n.cited), spare = notes.filter(n => !n.cited)
+  return <div className={'ds-beyond' + (none ? ' none' : '')} data-beyond={none ? 'none' : 'read'}>
+    <span className="k">Beyond the exports</span>
+    <span className="t">{b.line}{none ? '.' : ':'}</span>
+    {docs.map((d, i) => <button key={d.id} className="src" title="Open the section it read" onClick={() => openEvidence({ id: d.citation, ref: d.section, kind: 'document' })}><Icon d="M6 3h9l4 4v14H6zM15 3v4h4" s={12} />{d.title}</button>)}
+    {(all ? notes : used).map(n => <button key={n.id} className={'src note' + (n.cited ? '' : ' spare')} title={n.cited ? 'Open the owner note the answer cites' : 'Open the owner note: handed to the model for this question, not cited in the answer'} onClick={() => openEvidence({ id: n.citation, ref: n.id, kind: 'note' })}><Icon d="M5 4h14v12H9l-4 4z" s={12} />{n.title}</button>)}
+    {spare.length > 0 && <button className="more" onClick={() => setAll(a => !a)} title="Owner notes handed to the model for this question and not cited in the answer">{all ? 'cited only' : `+${spare.length} not cited`}</button>}
+  </div>
+}
+
+// ---------- an object and the document sections that name it: the link made when each document was read in ----------
+function DocLinks({ b }: { b: any }) {
+  const { idx, openEvidence } = useApp()
+  const secs: any[] = b.sections || []
+  const docs: { id: string; title: string; type?: string; date?: string; secs: any[] }[] = []
+  secs.forEach(s => { let d = docs.find(x => x.id === s.document_id); if (!d) { d = { id: s.document_id, title: s.document, type: s.type, date: s.date, secs: [] }; docs.push(d) } d.secs.push(s) })
+  return <>
+    <Sec k="Where the documents name it" ct="linked when each document was read in" />
+    <div className="ds-fig ds-doclinks" data-doclinks={secs.length}>
+      <div className="fh"><span className="k"><Obj text={b.object} idx={idx} /></span><span className="mono dim" style={{ fontSize: 10.5 }}>{b.named_in}</span></div>
+      <div className="fb">{docs.length === 0 && <p className="dim" style={{ margin: 0 }}>No project document names it.</p>}
+        {docs.map(d => <div className="dl" key={d.id}>
+          <div className="dt"><Icon d="M6 3h9l4 4v14H6zM15 3v4h4" s={14} /><b>{d.title}</b>{d.type && <span className="ds-tag">{d.type}</span>}<span className="grow" /><span className="dim">{d.date || 'undated'}</span></div>
+          {d.secs.map(s => <div className="sr" key={s.section} role="button" tabIndex={0} title="Open the section" onClick={() => openEvidence({ id: s.citation, ref: s.section, kind: 'document' })}
+            onKeyDown={e => { if (e.key === 'Enter') openEvidence({ id: s.citation, ref: s.section, kind: 'document' }) }}>
+            <span className="hd">{s.heading || 'opening'}</span>
+            <span className="ds-chips">{(s.names || []).slice(0, 4).map((n: string) => <Obj key={n} text={n} idx={idx} />)}{(s.names || []).length > 4 && <span className="ds-chip">+{s.names.length - 4}</span>}</span></div>)}
+        </div>)}</div>
+      <div className="cap">Each row is a section that names it; the chips are the objects that section names. Open a row to read the section.</div>
+    </div>
+  </>
+}
+
+// ---------- how a line item is calculated: the formula as the grammar parsed it, and the trace back to the inputs ----------
+type Seg = { t: 'text' | 'ref' | 'fn' | 'name'; v: string }
+function Segs({ s }: { s: Seg[] }) {
+  const { idx } = useApp()
+  return <span className="ds-fx">{(s || []).map((x, i) => x.t === 'ref' ? <Obj key={i} text={x.v} idx={idx} /> : x.t === 'fn' ? <b key={i} className="fn">{x.v}</b> : x.t === 'name' ? <i key={i}>{x.v}</i> : <React.Fragment key={i}>{x.v}</React.Fragment>)}</span>
+}
+
+/** The upstream trace: the line item on the right, what it reads to its left, back to the inputs. Drawn from the formula graph. */
+export function TraceDiagram({ t }: { t: any }) {
+  const { idx } = useApp()
+  const nodes: any[] = t.nodes || [], edges: [string, string][] = t.edges || []
+  const maxD = Math.max(0, ...nodes.map(n => n.distance))
+  const cols: any[][] = Array.from({ length: maxD + 1 }, (_, d) => nodes.filter(n => n.distance === d))
+  const rows = Math.max(1, ...cols.map(c => c.length))
+  const W = 1000, CW = W / (maxD + 1), BW = Math.min(250, CW - 34), RH = 40, H = rows * RH + 16
+  const at: Record<string, { x: number; y: number }> = {}
+  cols.forEach((c, d) => c.forEach((n, i) => { at[n.ref] = { x: (maxD - d) * CW + (CW - BW) / 2, y: 8 + (rows - c.length) * RH / 2 + i * RH } }))
+  return <svg viewBox={`0 0 ${W} ${H}`} className="ds-trace" role="img" aria-label={`What ${nodes[0]?.ref} is calculated from, back to the inputs`}>
+    {edges.map(([a, b], i) => at[a] && at[b] ? <path key={i} d={`M${at[b].x + BW} ${at[b].y + 14} C${at[b].x + BW + 30} ${at[b].y + 14}, ${at[a].x - 30} ${at[a].y + 14}, ${at[a].x} ${at[a].y + 14}`} fill="none" stroke="var(--rule)" strokeWidth="1.2" /> : null)}
+    {nodes.map(n => <foreignObject key={n.ref} x={at[n.ref].x} y={at[n.ref].y} width={BW} height={30}>
+      <div className={'ds-tn' + (n.input ? ' in' : '') + (n.distance === 0 ? ' me' : '')} title={n.ref + (n.input ? ' · an input: no formula' : '')}><Obj text={n.ref} idx={idx} /></div></foreignObject>)}
+  </svg>
+}
+
+function CalcBlock({ b, full, figure }: { b: any; full: boolean; figure: boolean }) {
+  const { idx } = useApp()
+  const p = b.parts || {}, t = b.trace || {}
+  return <>
+    <Sec k="How it is calculated" ct="the formula as the grammar parsed it" />
+    <div className="ds-fig ds-calc" data-calc={p.shape}>
+      <div className="fh"><span className="k"><Obj text={b.ref} idx={idx} /></span><span className="grow" />
+        {(b.functions || []).map((f: string) => <span key={f} className="ds-tag">{f}</span>)}{b.format && <span className="ds-tag">{String(b.format).toLowerCase()}</span>}</div>
+      <div className="fb">
+        {p.shape === 'if' && <table className="ds-branches"><tbody>
+          {p.branches.map((r: any, i: number) => <tr key={i}><th>{r.label}</th><td><Segs s={r.when} /></td><th className="then">THEN</th><td><Segs s={r.then} /></td></tr>)}
+          {p.otherwise?.length > 0 && <tr className="else"><th>ELSE</th><td className="dim">none of the above</td><th className="then">THEN</th><td><Segs s={p.otherwise} /></td></tr>}
+        </tbody></table>}
+        {p.shape === 'expression' && <p style={{ margin: 0 }}><Segs s={p.text} /></p>}
+        {p.shape === 'input' && <p className="dim" style={{ margin: 0 }}>An input: it has no formula. It is entered by hand or loaded by an import.</p>}
+        {p.shape === 'unparsed' && <p className="dim" style={{ margin: 0 }}>The formula could not be parsed, so it is shown as written: <code>{b.formula}</code></p>}
+      </div>
+      <div className="cap">{p.shape === 'if' ? `${p.branches.length} branch${p.branches.length !== 1 ? 'es' : ''}, read in order: the first one that holds decides. ` : ''}Each name opens the object. {fmtC(b.cells)} cells{b.applies_to?.length ? ` · by ${b.applies_to.join(', ')}` : ''}.</div>
+    </div>
+    {figure && t.nodes?.length > 1 && <div className="ds-fig"><div className="fh"><span className="k">Where it comes from</span><span className="mono dim" style={{ fontSize: 10.5 }}>inputs on the left, the line item on the right</span><span className="grow" />
+        <div className="ds-leg"><span><u style={{ background: 'var(--accent)' }} />input</span><span><u style={{ background: 'var(--muted)' }} />calculated</span></div></div>
+      <div className="fb"><TraceDiagram t={t} /></div>
+      <div className="cap">{t.upstream} line item{t.upstream !== 1 ? 's' : ''} upstream, {t.inputs} of them input{t.inputs !== 1 ? 's' : ''}, {t.depth} step{t.depth !== 1 ? 's' : ''} deep.{t.truncated ? ` The nearest ${t.nodes.length - 1} are drawn.` : ''} Read off the formula graph.</div></div>}
+  </>
+}
+
 // The frame of a Not recorded answer, above and outside the answer's own text: the one place Bert stands beside an answer.
 export const NotRecorded = () => <div className="ds-none bert" style={{ margin: '0 0 18px' }}><span className="ds-bert-fig" data-bert="question" data-bert-place="not-recorded"><img src={bertQuestion} alt="" aria-hidden="true" width="56" height="48" /></span><div><div className="h">Not recorded</div>
   <div style={{ fontSize: 14 }}>No document or note in this workspace gives a reason. The answer says only what the estate itself shows. The architect does not guess.</div></div></div>
@@ -87,6 +179,14 @@ function ReachBlock({ eid, b, full, figure }: { eid: string; b: any; full: boole
   </>
 }
 
+/** A finding the owner has already decided to live with: said on the card, with what records it. */
+function Kept({ k }: { k: any }) {
+  const { openEvidence } = useApp()
+  const open = k.citation ? () => openEvidence({ id: k.citation, ref: k.id, kind: k.kind }) : undefined
+  return <div className="ds-kept" data-kept={k.by}><span className="ds-tag violet" style={{ borderStyle: 'solid' }}>kept on purpose</span>
+    <span className="t">{k.by === 'note' ? 'Owner note: ' : k.by === 'document' ? 'Recorded in: ' : 'Decided: '}{open ? <button className="lnk" onClick={open}>{k.title}</button> : k.title}</span></div>
+}
+
 function ImproveBlock({ eid, full }: { eid: string; full: boolean }) {
   const { idx, summary } = useApp()
   const [p, setP] = useState<Plan | null>(null)
@@ -98,7 +198,9 @@ function ImproveBlock({ eid, full }: { eid: string; full: boolean }) {
     <div className="rk">{String(i + 1).padStart(2, '0')}</div>
     <div><h3>{c.title}</h3>{full && <div className="why">{c.why}</div>}
       <div className="meta"><span className={'ds-tag ' + (c.kind === 'change' ? 'ok' : 'sky')}>{c.kind === 'change' ? 'change' : 'investigate first'}</span><span className="ds-tag">evidence {c.strength}</span>
-        {(c.tests_named || []).slice(0, 2).map(x => <span className="ds-tag violet" key={x.num}>test {x.num} · {x.title}</span>)}</div>
+        {(c.tests_named || []).slice(0, 2).map(x => <span className="ds-tag violet" key={x.num}>test {x.num} · {x.title}</span>)}
+        {(c as any).rule_label && <span className="ds-tag" data-rule={(c as any).planual?.length ? 'planual' : 'own'} title={(c as any).planual?.length ? 'The Planual rule numbers this finding rests on. A flag, not a verdict.' : 'No Planual rule is behind this finding: it is one of the tool\'s own tests.'}>{(c as any).planual?.length > 4 ? `Planual ${(c as any).planual.slice(0, 4).join(', ')} +${(c as any).planual.length - 4}` : (c as any).rule_label}</span>}</div>
+      {(c as any).kept && <Kept k={(c as any).kept} />}
       {full && <div className="ds-chips" style={{ marginTop: 8 }}>{c.objects.slice(0, 3).map(o => <Obj key={o} text={o} idx={idx} />)}{c.objects.length > 3 && <span className="ds-chip">+{c.objects.length - 3}</span>}</div>}</div>
     <div className="win">
       <div className="ds-meter"><div className="l"><span>cells</span><b>{fmtC(c.footprint_cells)}</b></div><div className="t"><i style={{ width: 100 * (c.footprint_cells || 0) / maxC + '%' }} /></div></div>
@@ -147,22 +249,36 @@ function Blocks({ t, eid, full, figs, onAsk }: { t: Turn; eid: string; full: boo
   const more = full || figs
   const { openEvidence } = useApp()
   const raw: any[] = (t as any).blocks || []
-  // a build plan leads; the passages and notes that record why it was wanted follow it, they do not sit on top of it
-  const isPlan = raw.some(b => b.type === 'build_plan')
-  const blocks = isPlan ? [...raw.filter(b => b.type !== 'passages' && b.type !== 'notes'), ...raw.filter(b => b.type === 'passages' || b.type === 'notes')] : raw
-  return <>{blocks.map((b, i) => {
+  // One feature per kind of answer, first and largest. Where the documents are that feature (a why-answer, what the
+  // documents say) the passages are shown open; anywhere else they and the owner notes fold into one small line under
+  // the feature, because the line under the lead has already said what was read.
+  const kind: string = (t as any).kind || 'general'
+  const isSrc = (b: any) => b.type === 'passages' || b.type === 'notes'
+  const srcOpen = kind === 'why' || kind === 'general' || kind === 'documents'
+  const feature = raw.filter(b => !isSrc(b)), sources = raw.filter(isSrc)
+  const blocks = kind === 'why' || kind === 'general' ? raw : feature
+  const nPass = sources.filter(b => b.type === 'passages').reduce((n, b) => n + b.items.length, 0), nNotes = sources.filter(b => b.type === 'notes').reduce((n, b) => n + b.items.length, 0)
+  const draw = (b: any, i: number) => {
+    if (b.type === 'beyond') return null                    // drawn straight under the lead, in both modes
     if (b.type === 'not_recorded') return <NotRecorded key={i} />
-    if (b.type === 'passages') return more ? <React.Fragment key={i}>{isPlan && <Sec k="Why this was wanted" ct="what the documents record" />}<Passages items={b.items} /></React.Fragment> : null
+    if (b.type === 'passages') return more ? <React.Fragment key={i}><Passages items={b.items} /></React.Fragment> : null
     if (b.type === 'notes' && full) return <React.Fragment key={i}><Sec k="Owner notes it rests on" ct={String(b.items.length)} />
       <div className="ds-list">{b.items.map((n: any) => <div className="r" key={n.id} role="button" tabIndex={0} style={{ cursor: 'pointer' }} onClick={() => openEvidence({ id: n.citation, ref: n.id, kind: 'note' })}><span className="ds-tag">note</span><span className="grow">{n.title}</span><span className="dim">open →</span></div>)}</div></React.Fragment>
     if (b.type === 'reach') return <ReachBlock key={i} eid={eid} b={b} full={full} figure={more} />
     if (b.type === 'improve') return more ? <ImproveBlock key={i} eid={eid} full={full} /> : null
     if (b.type === 'overview') return more ? <OverviewBlock key={i} /> : null
     if (b.type === 'count') return <CountBlock key={i} b={b} full={full} />
+    if (b.type === 'calculation') return <CalcBlock key={i} b={b} full={full} figure={more} />
+    if (b.type === 'object_documents') return more ? <DocLinks key={i} b={b} /> : null
     if (b.type === 'build_plan') return <PlanBlock key={i} plan={b.plan} full={full} onAsk={onAsk} turn={t.id} />
     if (b.type === 'plan_rejected') return <div className="ds-none" key={i} style={{ marginBottom: 18 }}><div className="h">No plan passed the checks</div><div style={{ fontSize: 14 }}>The proposal was rejected by the code that parses the formulas and resolves the references, so no plan is shown.{(b.rejected || []).slice(0, 4).map((r: any, j: number) => <div key={j} className="dim" style={{ fontSize: 12.5, marginTop: 4 }}>{r.what}: {r.why}</div>)}</div></div>
     return null
-  })}</>
+  }
+  const after = blocks === raw ? [] : sources
+  return <>{blocks.map(draw)}
+    {after.length > 0 && more && (srcOpen ? after.map((b, i) => draw(b, 1000 + i))
+      : <details className="ds-srcfold" data-srcfold={nPass + nNotes}><summary>Sources: {[nPass ? `${nPass} passage${nPass !== 1 ? 's' : ''}` : '', nNotes ? `${nNotes} owner note${nNotes !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</summary>
+          {after.map((b, i) => draw(b, 1000 + i))}</details>)}</>
 }
 
 // ---------- the context it was given, and what it did ----------
@@ -217,7 +333,7 @@ export function TurnView({ t, eid, first, onSave, onAsk }: { t: Turn; eid: strin
   const { lead, rest } = useMemo(() => splitBrief(t.a), [t.a])
   const steps: any[] = x.run?.steps || []
   const blocks: any[] = x.blocks || []
-  const hasFigure = blocks.some(b => ['reach', 'improve', 'overview'].includes(b.type))            // a plan and a count carry their own
+  const hasFigure = blocks.some(b => ['reach', 'improve', 'overview', 'calculation', 'object_documents'].includes(b.type))            // a plan and a count carry their own
   const hasSources = blocks.some(b => b.type === 'passages')
   const parts = [`${v?.cited ?? 0} cited`]
   const qs = (v as any)?.quotes
@@ -236,12 +352,16 @@ export function TurnView({ t, eid, first, onSave, onAsk }: { t: Turn; eid: strin
         <ol>{steps.map((s, i) => <li key={i}>{s.kind === 'model' ? `model: ${s.name}` : s.kind === 'check' ? `validator: ${s.args}` : `${s.name}(${s.args || ''})`} → {s.out}</li>)}</ol></details>}
       {kind === 'plan' && full && <div className="ds-sec" style={{ marginTop: 4 }}><span className="k">Overview</span></div>}
       <div className="ds-lead md-lead">{md(lead)}</div>
+      {blocks.filter(b => b.type === 'beyond').slice(0, 1).map((b, i) => <Beyond key={i} b={b} />)}
       <Blocks t={t} eid={eid} full={full} figs={figs} onAsk={q => onAsk(q, x.mode)} />
       {!full && <div className="ds-affs">
         {(hasFigure || hasSources) && <button className="ds-aff" onClick={() => setFigs(s => !s)}>{figs ? (hasFigure ? 'hide diagram' : 'hide sources') : (hasFigure ? 'show diagram' : 'show sources')}</button>}
         <button className="ds-aff" onClick={() => onAsk('Explain that answer in more detail.', 'full')}>explain</button>
         <button className="ds-aff" onClick={() => setFull(true)} title="The figures, sources and tables for this answer, without asking again">expand to Full</button></div>}
       {full && rest.trim() && <div className="ds-rest">{md(rest)}</div>}
+      {blocks.filter(b => b.type === 'followups').slice(0, 1).map((b, i) => <div className="ds-asknext" key={i} data-next={b.items.length}>
+        <span className="k">Ask next</span>
+        {b.items.map((q: any) => <button key={q.text} className="q" title="Ask this in the same chat" onClick={() => onAsk(q.text, x.mode)}>{q.text}<span className="go" aria-hidden="true">→</span></button>)}</div>)}
       {(t.unverified?.length || phantom.length || untraced.length || qs?.missing?.length) ? <div className="ds-flags">
         {t.unverified && t.unverified.length > 0 && <p className="ds-gap">Names not found in the estate: {t.unverified.map((n, i) => <React.Fragment key={i}>{i ? ' ' : ''}<code className="obj unknown">{n}</code></React.Fragment>)}</p>}
         {phantom.length > 0 && <p className="ds-gap">Ids the tools never handed: {phantom.join(', ')}</p>}
