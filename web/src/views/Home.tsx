@@ -131,7 +131,7 @@ export function EstateSettings() {
           <div><label>Delete this workspace</label><div className="small muted">Takes its {s.models.length} model{s.models.length !== 1 ? 's' : ''} and their exports, {(s as any).documents ?? 0} document{(s as any).documents === 1 ? '' : 's'}, {s.conversations?.length ?? 0} chat{s.conversations?.length === 1 ? '' : 's'} and {s.notes ?? 0} note{s.notes === 1 ? '' : 's'} with it. You type its name to confirm. There is no undo.</div></div>
           <div><label>&nbsp;</label><button onClick={() => setAsk(true)}>Delete workspace…</button></div>
         </div>
-        {ask && <DeleteWorkspace ws={{ id: eid, name: s.name, models: s.models.length, documents: (s as any).documents, chats: s.conversations?.length, notes: s.notes }} onClose={() => setAsk(false)} onDone={deleted} toast={toast} />}
+        {ask && <DeleteWorkspace ws={{ id: eid, name: s.name, models: s.models.length, documents: (s as any).documents, chats: s.conversations?.length, notes: s.notes, team: (s as any).access?.team, members: (s as any).access?.members }} onClose={() => setAsk(false)} onDone={deleted} toast={toast} />}
       </div>
     </>
   )

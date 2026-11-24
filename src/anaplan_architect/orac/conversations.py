@@ -74,7 +74,7 @@ def _turn(db: Db, t: dict) -> dict:
     out = {"id": t["id"], "seq": t["seq"], "q": t["question"], "a": t["answer"], "tools": json.loads(t["tools_json"] or "[]"),
            "usage": json.loads(t["usage_json"] or "{}"), "unverified": json.loads(t["unverified_json"] or "[]"),
            "unchecked": json.loads(t["unchecked_json"] or "[]"), "verification": json.loads(t.get("verification_json") or "null"),
-           "when": t["created"], "by": t["author_id"], "mode": t.get("mode") or "full", "kind": t.get("kind") or "general",
+           "when": t["created"], "by": t["author_id"], "by_was": t.get("author_was"), "trace_level": t.get("trace_level"), "mode": t.get("mode") or "full", "kind": t.get("kind") or "general",
            "context": json.loads(t.get("context_json") or "null"), "run": json.loads(t.get("run_json") or "null"),
            "blocks": json.loads(t.get("blocks_json") or "[]")}
     out["citations"] = [dict(json.loads(c["payload_json"] or "{}"), id=c["id"], kind=c["kind"], model=c["model_id"], ref=c["object_ref"],
@@ -138,13 +138,14 @@ def add_turn(db: Db, cid: str, turn: dict, author: str | None = None, snapshot_i
     with db.tx():
         js = lambda v: json.dumps(v, default=str, ensure_ascii=False) if v is not None else None
         db.run("INSERT INTO turns(id, conversation_id, seq, author_id, question, answer, tools_json, usage_json, cost_usd, unverified_json, unchecked_json, "
-               "verification_json, created, context_json, run_json, blocks_json, mode, kind, metered_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", tid, cid, seq, author or turn.get("by"),
+               "verification_json, created, context_json, run_json, blocks_json, mode, kind, metered_usd, trace_level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", tid, cid, seq, author or turn.get("by"),
                turn.get("q", ""), turn.get("a", ""),
                json.dumps(turn.get("tools") or [], default=str), json.dumps(usage, default=str), float(usage.get("cost_usd") or 0),
                json.dumps(turn.get("unverified") or []), json.dumps(turn.get("unchecked") or []),
                json.dumps(ver, default=str) if ver is not None else None, turn.get("when") or now(),
                js(turn.get("context")), js(turn.get("run")), js(turn.get("blocks")), turn.get("mode") or "full", turn.get("kind") or "general",
-               float(usage.get("metered_usd") if usage.get("metered_usd") is not None else usage.get("cost_usd") or 0))
+               float(usage.get("metered_usd") if usage.get("metered_usd") is not None else usage.get("cost_usd") or 0),
+               turn.get("trace_level") if turn.get("trace_level") in ("off", "structure", "content") else None)
         for c in turn.get("citations") or []:
             db.run("INSERT OR IGNORE INTO citations(id, owner_kind, owner_id, provenance, snapshot_id, model_id, kind, object_ref, source_ref, payload_json) "
                    "VALUES (?,?,?,?,?,?,?,?,?,?)", c.get("id"), "turn", tid, c.get("provenance") or "observed", c.get("snapshot_id") or snapshot_id or r["snapshot_id"],

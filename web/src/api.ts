@@ -49,7 +49,7 @@ export type TestRow = { num: string; key: string; category: number; title: strin
   by_model: { model: string; hits: number; cells: number | null; effort: number | null }[]; not_run: { model: string; why: string }[]
   findings: { id: string; title: string; model: string }[]; rules: { ref: string; id: string }[]; needs: string[]; planual: string[] }
 export type TestsDetail = TestsRollup & { snapshot: string | null; tests: TestRow[]; note: string }
-export type EstateHead = { id: string; name: string; created: string; archived: boolean; models: string[]; documents?: number; chats?: number; notes?: number; snapshot: { id: string; label: string; activated_at: string } | null }
+export type EstateHead = { id: string; name: string; created: string; archived: boolean; visibility?: 'private' | 'shared'; team?: string | null; mine?: boolean; created_by_name?: string | null; models: string[]; documents?: number; chats?: number; notes?: number; snapshot: { id: string; label: string; activated_at: string } | null }
 
 // ---------- citations and verification (stage 3) ----------
 export type Citation = { id: string; kind: string; model: string; ref: string; name: string; snapshot_id: string; provenance: string; tool: string; as_written?: string }
@@ -138,7 +138,7 @@ export class ApiError extends Error {
 }
 
 export type TraceLevel = 'off' | 'structure' | 'content'
-export type Me = { open: boolean; closed: boolean; accounts: boolean; user: { id: string; email: string; name: string; role: string; created: string; last_seen: string | null; disabled: boolean } | null
+export type Me = { open: boolean; closed: boolean; accounts: boolean; user: { id: string; email: string; name: string; role: string; created: string; last_seen: string | null; disabled: boolean; team?: string | null } | null
   tracing?: { enabled: boolean; host: string | null; error: string | null; backend?: string; ceiling?: string; write_only?: boolean }; notice?: string; demo?: boolean
   trace?: { available: boolean; level: TraceLevel; chosen: TraceLevel | null; chosen_at: string | null; default: TraceLevel; ceiling: 'structure' | 'content' }
   workspace: { id: string; name: string; created: string }; data_dir: string; provider: string; model: string; host: string; bind: string; console_hint: string }

@@ -189,7 +189,7 @@ def test_notes_are_flagged_when_cited_evidence_moves(tmp_path):
     assert _second_snapshot(app, c, eid, label="v4")["review"]["reviewed"] == 1
 
 
-def test_backup_leaves_credentials_behind_and_restores_under_the_same_ids(tmp_path, capsys):
+def test_backup_leaves_credentials_behind_and_restores_what_is_inside_under_the_same_ids(tmp_path, capsys):
     app = create_app(tmp_path / "data", client_factory=_Cites)
     c = TestClient(app)
     s1 = _upload(c).json(); eid = s1["id"]; sid1 = s1["snapshot"]["id"]
@@ -214,24 +214,33 @@ def test_backup_leaves_credentials_behind_and_restores_under_the_same_ids(tmp_pa
     assert sum(1 for x in names if x.startswith("blobs/")) == 4 and any(x.startswith("architect/transcripts/") for x in names)
     assert people == [] and all("email" not in p and "pw_hash" not in p for p in people)
     ins = c.post("/api/estates/restore/inspect", files={"file": ("e.zip", zpath.read_bytes(), "application/zip")}).json()
-    assert ins["conflict"] == {"id": eid, "name": "Test estate"} and ins["models"] == ["Caldergate Planning", "Caldergate HR Model"] and ins["blobs_missing"] == []
-    assert c.post("/api/estates/restore", files={"file": ("e.zip", zpath.read_bytes(), "application/zip")}).status_code == 409
+    assert not ins["conflict"] and "Test estate" not in json.dumps({k: v for k, v in ins.items() if k != "name"}) and ins["models"] == ["Caldergate Planning", "Caldergate HR Model"] and ins["blobs_missing"] == []
     assert c.post("/api/estates/restore/inspect", files={"file": ("x.zip", b"not a zip", "application/zip")}).status_code == 400
-    # delete, then restore under another name: same ids, same evidence, same decisions
-    assert c.request("DELETE", f"/api/estates/{eid}", json={"confirm": "Test estate"}).status_code == 200
-    assert c.get(f"/api/citations/{cites['CAL04 Margin.Margin %']}").status_code == 404
+    # restore beside the original, under another name: every id is made again, and the evidence, the notes and the decisions come with it
     r = c.post("/api/estates/restore", data={"name": "Restored"}, files={"file": ("e.zip", zpath.read_bytes(), "application/zip")})
     assert r.status_code == 200, r.text
     s = r.json()
-    assert s["id"] == eid and s["name"] == "Restored" and s["snapshot"]["id"] == sid1 and [x["name"] for x in s["models"]] == ["Caldergate Planning", "Caldergate HR Model"]
-    assert s["restore"]["blobs"] == 4 and s["restore"]["authors_unknown"] == 0 and s["notes"] == 1 and [x["id"] for x in s["conversations"]] == [cid]
-    got = c.get(f"/api/conversations/{cid}").json()
+    was, eid = eid, s["id"]
+    ncid = s["conversations"][0]["id"]
+    assert eid != was and ncid != cid and s["snapshot"]["id"] != sid1 and c.get(f"/api/estates/{was}").status_code == 200          # the original is untouched
+    assert s["name"] == "Restored" and [x["name"] for x in s["models"]] == ["Caldergate Planning", "Caldergate HR Model"]
+    assert s["restore"]["blobs"] == 4 and s["restore"]["authors_unknown"] == 0 and s["notes"] == 1 and len(s["conversations"]) == 1
+    got = c.get(f"/api/conversations/{ncid}").json()
     assert len(got["turns"]) == 1 and got["stale"] is None and len(got["turns"][0]["citations"]) == 3
-    ev = c.get(f"/api/citations/{cites['CAL04 Margin.Margin %']}").json()
-    assert ev["object"]["formula"] == "Margin / Net Revenue" and ev["cited_in"]["notes"][0]["id"] == n["id"] and ev["export_row"]["row"]["Formula"] == "Margin / Net Revenue"
-    assert c.get(f"/api/notes/{n['id']}").json()["sources_resolved"][0]["ref"] == "CAL04 Margin.Margin %"
+    new_cites = {k: v["id"] for k, v in _cited(got["turns"][0]).items()}
+    old = cites["CAL04 Margin.Margin %"]; new = new_cites["CAL04 Margin.Margin %"]
+    assert new != old and old not in got["turns"][0]["a"] and (new in got["turns"][0]["a"]) == (old in conv["turns"][0]["a"])       # the answer names the new id where it named the old
+    ev = c.get(f"/api/citations/{new}").json()
+    note2 = c.get(f"/api/estates/{eid}/notes").json()[0]
+    assert ev["estate"] == eid and ev["object"]["formula"] == "Margin / Net Revenue" and ev["cited_in"]["notes"][0]["id"] == note2["id"] != n["id"] and ev["export_row"]["row"]["Formula"] == "Margin / Net Revenue"
+    assert note2["sources_resolved"][0]["ref"] == "CAL04 Margin.Margin %" and note2["sources_resolved"][0]["id"] == new
+    assert c.get(f"/api/citations/{old}").json()["estate"] == was                                             # the old id is still the original's, and only its
     assert next(a for a in c.get(f"/api/estates/{eid}/plan").json()["actions"] if a["state_key"] == key)["state"]["state"] == "investigating"
-    assert c.post(f"/api/conversations/{cid}/messages", json={"text": "again"}).json()["a"].startswith("Answer")
+    assert c.post(f"/api/conversations/{ncid}/messages", json={"text": "again"}).json()["a"].startswith("Answer")
+    cid = ncid
+    # a second restore of the same file is one more workspace: nothing in an archive can be "already here"
+    r2 = c.post("/api/estates/restore", data={"name": "Again"}, files={"file": ("e.zip", zpath.read_bytes(), "application/zip")})
+    assert r2.status_code == 200 and r2.json()["id"] not in (was, eid) and len(c.get("/api/estates").json()) == 3
     # the console: list, back up to a folder, restore into a fresh store; a second restore is refused
     cli.main(["backup", "--data", str(tmp_path / "data"), "--list"])
     out = capsys.readouterr().out
@@ -244,12 +253,14 @@ def test_backup_leaves_credentials_behind_and_restores_under_the_same_ids(tmp_pa
     assert json.loads(capsys.readouterr().out)["estate_id"] == eid
     cli.main(["restore", "--data", str(tmp_path / "fresh"), str(z2)])
     c3 = TestClient(create_app(tmp_path / "fresh", client_factory=_Cites))
-    assert [e["id"] for e in c3.get("/api/estates").json()] == [eid]
+    assert len(c3.get("/api/estates").json()) == 1 and c3.get("/api/estates").json()[0]["id"] != eid
+    eid = c3.get("/api/estates").json()[0]["id"]
     settled(c3, f"/api/estates/{eid}")                                        # a store restored from the console has no parse cache: re-read in the background first
-    assert c3.get(f"/api/citations/{cites['CAL04 Margin.Margin %']}").json()["object"]["formula"] == "Margin / Net Revenue"
-    assert c3.get(f"/api/conversations/{cid}").json()["turns"][1]["q"] == "again"
-    with pytest.raises(SystemExit):
-        cli.main(["restore", "--data", str(tmp_path / "fresh"), str(z2)])
+    conv3 = c3.get(f"/api/conversations/{c3.get(f'/api/estates/{eid}').json()['conversations'][0]['id']}").json()
+    assert conv3["turns"][1]["q"] == "again"
+    assert c3.get(f"/api/citations/{_cited(conv3['turns'][0])['CAL04 Margin.Margin %']['id']}").json()["object"]["formula"] == "Margin / Net Revenue"
+    cli.main(["restore", "--data", str(tmp_path / "fresh"), str(z2)])          # a second restore is a second workspace
+    assert len(TestClient(create_app(tmp_path / "fresh", client_factory=_Cites)).get("/api/estates").json()) == 2
 
 
 def test_deletion_removes_material_from_retrieval(tmp_path):

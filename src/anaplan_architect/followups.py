@@ -29,6 +29,8 @@ _NEXT = {
     "count": [("general", "Which of these hold the most cells?", None), ("improve", "What should we fix first?", None)],
     "general": [("implications", "What are the implications of changing {x}?", "subject"), ("why", "Why is {x} built this way?", "subject")],
 }
+# where to go when the answer was about no one object: every answer offers something
+_ANYWHERE = [("improve", "What should we fix first, and what has already been decided?", None), ("overview", "Give me an overview of the estate.", None)]
 # nobody wrote the reason down: the next step is to look wider, not to ask why again
 _NOT_RECORDED = [("documents", "What do the project documents say about {x}?", "subject"), ("implications", "What are the implications of changing {x}?", "subject"),
                  ("calculation", "How is {x} calculated?", "line_item")]
@@ -37,7 +39,7 @@ _NOT_RECORDED = [("documents", "What do the project documents say about {x}?", "
 def suggest(kind: str, subject: dict | None, flags: int = 0, not_recorded: bool = False, limit: int = 3) -> list[dict]:
     """Up to three next questions for an answer of this kind about this object ({"kind": "line_item" | "module", "ref"}).
     A question that needs an object is left out when the answer had none; one about a formula is left out for a module."""
-    rows = _NOT_RECORDED if not_recorded else _NEXT.get(kind) or _NEXT["general"]
+    rows = list(_NOT_RECORDED if not_recorded else _NEXT.get(kind) or _NEXT["general"]) + [r for r in _ANYWHERE if r[0] != kind]
     out: list[dict] = []
     for leads_to, text, needs in rows:
         if needs in ("subject", "line_item") and not (subject and subject.get("ref")):
@@ -52,9 +54,10 @@ def suggest(kind: str, subject: dict | None, flags: int = 0, not_recorded: bool 
     return out
 
 
-def subject_of(blocks: list[dict], cited: list[dict], text: str = "") -> dict | None:
+def subject_of(blocks: list[dict], cited: list[dict], text: str = "", named: list[dict] | None = None) -> dict | None:
     """The object an answer was about: the one its own figure was drawn for, else the first line item or module it
-    cites in its lead. Always an object a tool handed, so always one the model has."""
+    cites, else (`named`) the first one it names that the workspace really has, though no tool handed it this turn.
+    Always an object of the model: never a name that is only in the answer."""
     for b in blocks:
         if b.get("type") == "calculation" and b.get("ref"):
             return {"kind": "line_item", "ref": b["ref"], "model": b.get("model")}
@@ -70,7 +73,7 @@ def subject_of(blocks: list[dict], cited: list[dict], text: str = "") -> dict | 
             used = ((p.get("uses") or {}).get("line_items") or [None])[0]
             if used:
                 return {"kind": "line_item", "ref": f"{used['module']}.{used['name']}", "model": p.get("model")}
-    objs = [c for c in cited if c.get("kind") in ("line_item", "module") and c.get("ref")]
+    objs = [c for c in cited if c.get("kind") in ("line_item", "module") and c.get("ref")] or [c for c in named or [] if c.get("kind") in ("line_item", "module") and c.get("ref")]
     if not objs:
         return None
     pos = lambda c: (text.find("`" + c["ref"] + "`") if "`" + c["ref"] + "`" in text else 10 ** 9)

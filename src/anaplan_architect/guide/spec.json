@@ -1,0 +1,132 @@
+{
+  "about": "The getting-started guide, written once. tools/guide.py reads this, takes each screen from the capture store (Caldergate, demo logins), finds where each callout points by its selector, and writes the guide the app shows (static/guide/guide.json with its images) and the one-file version to send or print (docs/onboarding/getting-started.html). Text is text: nothing is baked into a picture.",
+  "title": "Getting started with /architect",
+  "lead": "You have just been given a login. This is what you will see, in the order you will meet it. It takes about ten minutes to read.",
+  "from": "Karim Lameer, CodelessOps",
+  "sections": [
+    {
+      "id": "sign-in", "title": "Sign in", "bert": "hello",
+      "body": ["I created your login and sent you a username and a password. There is no sign-up page, and nobody else can make a login.",
+               "Read the notice on the sign-in page once. It says what I can see as the person running this instance, and it says that what you upload is your responsibility. Upload only what you are allowed to share."],
+      "screens": [{"name": "sign-in", "as": "signed-out", "where": "", "alt": "The sign-in page", "callouts": [
+        {"sel": "#u", "side": "left", "text": "Your username and password, as I sent them. Change the password in Settings once you are in."},
+        {"sel": ".ds-auth .ds-gap, .ds-auth .dim.small", "side": "left", "text": "The notice. It is short. It is the agreement between us."}]}]
+    },
+    {
+      "id": "workspaces", "title": "Workspaces, Private and Shared", "bert": "information",
+      "body": ["Everything lives in a workspace: a set of Anaplan models, their documents, your chats and your notes. Nothing is remembered from one workspace to the next.",
+               "A workspace is Private or Shared. Private is yours alone. Shared is open to everyone in your team, which means your company, and to nobody else. I never see inside either."],
+      "screens": [{"name": "switcher", "as": "member", "where": "e/{shared}", "click": ".ds-ws > button", "wait": ".ds-ws .pop", "alt": "The workspace switcher, open", "callouts": [
+        {"sel": ".ds-ws > button", "side": "right", "text": "The workspace you are in. Click it to switch."},
+        {"sel": ".ds-ws .pop [data-access='shared']", "side": "right", "text": "Shared with your team. The line under the name says which team and who made it."},
+        {"sel": ".ds-ws .pop a.add", "side": "right", "text": "Make a new workspace here."}]}]
+    },
+    {
+      "id": "make-a-workspace", "title": "Make a workspace from your Anaplan exports",
+      "body": ["You need up to three exports from each model. All three are grid exports from the model settings in Anaplan, saved as CSV.",
+               "You can start with Line Items alone. Add the other two when you can: answers about imports, exports and module sizes need them."],
+      "list": ["Line Items: in Anaplan, open Model Settings (the cog), then Line Items. Export the whole grid, all columns. This is the one that matters most: it holds every formula.",
+               "Modules: Model Settings, then Modules. Export the grid.",
+               "Actions: Model Settings, then Actions. Export each tab you use (Imports, Exports, Processes) or the combined grid.",
+               "One row per model on the new workspace page. Give each model the name your team calls it."],
+      "screens": [{"name": "new-workspace", "as": "member", "where": "new", "wait": "#access-choice", "alt": "The new workspace page", "callouts": [
+        {"sel": ".card.up .row.five", "side": "top", "text": "One row per model: its name, then the Line Items export, then Actions and Modules if you have them."},
+        {"sel": "#access-choice", "side": "top", "text": "Private or Shared with your team. Decide now; you can change it later."},
+        {"sel": ".card.up .actions .primary", "side": "bottom", "text": "Parse and open. A model of a few thousand line items takes a few seconds."}]}]
+    },
+    {
+      "id": "documents", "title": "Add your project documents", "bert": "evidence",
+      "body": ["The exports say what was built. Your documents say why. Upload design records, meeting notes, handover notes, change requests: PDF, Word, Markdown or text.",
+               "Each document is split into sections, and each section is tied to the modules and line items it names. Nobody tags anything by hand. That link is what lets an answer quote the passage that records a decision."],
+      "screens": [{"name": "documents", "as": "owner", "where": "e/{demo}/documents", "wait": ".ds-doc", "alt": "The Documents page", "callouts": [
+        {"sel": ".ds-drop", "side": "top", "text": "Drop files here. Up to twenty documents in a workspace."},
+        {"sel": ".ds-doc", "side": "bottom", "text": "A card per document: what it is, its sections, and how often answers have quoted it."},
+        {"sel": ".ds-doc .ds-chips", "side": "bottom", "text": "The modules and line items the document names. Click one to open it."}]}]
+    },
+    {
+      "id": "ask", "title": "Ask a question", "bert": "neutral",
+      "body": ["Type a question in plain words. Name the module or line item if you know it. If you do not, describe it and it will be found.",
+               "These eight are good first questions. Each one shows a different thing the tool can do."],
+      "questions": true,
+      "screens": [{"name": "ask", "as": "owner", "where": "e/{demo}", "wait": ".ds-askbar", "alt": "The workspace page with the question box", "callouts": [
+        {"sel": ".ds-askbar", "side": "bottom", "text": "Ask here, or use New chat on the left."},
+        {"sel": ".ds-new", "side": "right", "text": "Each question starts a chat. Follow-ups stay in the same chat and it remembers them."}]}]
+    },
+    {
+      "id": "read-an-answer", "title": "Read an answer",
+      "body": ["An answer is short on purpose. The first lines are the answer. Then comes one picture or set of cards for that kind of question. Then the evidence.",
+               "A language model writes the words. Code checks them before you see them: every name against your exports, every figure against what was looked up, every quote against the document it cites."],
+      "screens": [
+        {"name": "answer-top", "as": "owner", "where": "chat:why", "alt": "The top of an answer", "callouts": [
+          {"sel": ".ds-turn .ds-lead", "side": "right", "text": "The lead: the answer in two or three sentences. A coloured name is a real object; click it to open its formula."},
+          {"sel": ".ds-turn .ds-beyond", "side": "right", "text": "Beyond the exports: which documents and notes this answer read. Each one opens."},
+          {"sel": ".ds-turn .ds-src", "side": "right", "text": "The source: the passage, quoted word for word, with its document, section and date."}]},
+        {"name": "answer-foot", "as": "owner", "where": "chat:why", "scroll": ".ds-turn .ds-asknext", "alt": "The foot of an answer", "callouts": [
+          {"sel": ".ds-turn .ds-asknext", "side": "top", "text": "Ask next: two or three questions that lead on from this one. One click asks it."},
+          {"sel": ".ds-turn .ds-foot .ds-tag", "side": "top", "text": "The verdict. Verified means everything in the answer was tied to your workspace. Flagged means something was not, and it is marked."},
+          {"sel": ".ds-turn .ds-foot button.ctx", "side": "top", "text": "Context: exactly what the model was given for this answer, and each step it took."}]}]
+    },
+    {
+      "id": "concise-and-full", "title": "Concise and Full",
+      "body": ["Full gives the picture, the sources and the detail. Concise gives only what you act on, with the rest one click away.",
+               "Use Concise when you are in the middle of building and want the next step. Use Full when you are deciding."],
+      "screens": [{"name": "composer", "as": "owner", "where": "chat:why", "compose": true, "scroll_end": true, "alt": "The chat box", "callouts": [
+        {"sel": ".ds-compose .ds-seg", "side": "top", "text": "Concise or Full, for the next question. Your usual choice is in Settings."},
+        {"sel": ".ds-compose textarea", "side": "top", "text": "Follow-ups go here. Enter sends."}]}]
+    },
+    {
+      "id": "build-plans", "title": "Build plans, and the Planual flags", "bert": "processing",
+      "body": ["Ask for a plan to build something and you get instructions you can follow in Anaplan: modules, line items, formats, formulas, in build order. Every formula is parsed and every name checked before the plan is shown. Nothing is built for you. It is a plan.",
+               "Each planned line item carries flags by Planual rule number: as per a rule, or departing from one. A flag is advice. You may have a good reason to depart, and often a document already records it.",
+               "When the plan needs something an export cannot hold, such as the name of a list member, it marks the gap as You supply and carries on."],
+      "screens": [{"name": "plan", "as": "owner", "where": "chat:plan", "scroll": ".ds-turn .ds-mod", "alt": "A build plan", "callouts": [
+        {"sel": ".ds-turn .swap", "side": "right", "text": "What changes in an existing formula. Only the changed part is shown; the whole formula is one click away."},
+        {"sel": ".ds-turn .ds-pflags", "side": "right", "text": "Planual flags, by rule number, with one line of why."},
+        {"sel": ".ds-turn .ds-supply", "side": "right", "text": "You supply: the one thing the plan could not know."}]}]
+    },
+    {
+      "id": "what-a-change-touches", "title": "What a change touches",
+      "body": ["Before you change a line item or a module, ask what it reaches. You get every line item that reads it, counted once, by how many formulas away it is, with the actions and the other models involved.",
+               "Reach follows formula references. It tells you where to look. It does not prove a value will change."],
+      "screens": [{"name": "reach", "as": "owner", "where": "chat:implications", "scroll": ".ds-turn .ds-tiles", "wait": ".ds-turn .ds-fig svg", "alt": "The reach of a change", "callouts": [
+        {"sel": ".ds-turn .ds-tiles", "side": "top", "text": "The size of it: line items, modules, cells, actions, other models."},
+        {"sel": ".ds-turn .ds-fig .ds-seg", "side": "top", "text": "Rings by distance, or Steps module by module."},
+        {"sel": ".ds-turn .ds-fig svg", "side": "left", "text": "The change at the centre. Each ring is one more formula away."}]}]
+    },
+    {
+      "id": "notes", "title": "Notes: what you know that the model does not",
+      "body": ["A note is something you tell the tool once: why a module is kept, who owns a feed, what must not be touched. It is used in later answers and cited like a document.",
+               "Save any answer as a note from the button under it, or write one on the Notes page. A note is a working assumption until someone confirms it, and it says which it is."],
+      "screens": [{"name": "notes", "as": "owner", "where": "e/{demo}/notes", "wait": ".note", "alt": "The Notes page", "callouts": [
+        {"sel": ".note", "side": "top", "text": "A note: what it says, what kind it is, whether it is confirmed, and what it is about."},
+        {"sel": ".note .scope", "side": "bottom", "text": "The object it is tied to. An answer about that object will read this note."}]}]
+    },
+    {
+      "id": "what-it-cannot-see", "title": "What it cannot see", "bert": "warning",
+      "body": ["It reads exports, so it knows what an export holds. Some things are not in any export, and it will say so when a question depends on them."],
+      "list": ["Pages, dashboards and saved views. It cannot tell you whether anyone looks at a line item.",
+               "List members. It knows a list exists and where it is used, not what is in it.",
+               "Data. No cell values, so it cannot tell you a number is wrong.",
+               "User access and selective access.",
+               "When nobody wrote a reason down, it says Not recorded. It does not guess."]
+    },
+    {
+      "id": "spend", "title": "Your spend cap",
+      "body": ["Each question costs a little, because a language model answers it. Your login has a cap. A question counts against the cap of whoever asked it, in a shared workspace too.",
+               "When you reach the cap, the next question is refused with a plain message and nothing is lost. Message me and I will raise it."]
+    },
+    {
+      "id": "tracing", "title": "Tracing, and your choice",
+      "body": ["Tracing sends a record of a question and its answer to a separate service, so that I can see why an answer went wrong. For your login it is off unless you turn it on.",
+               "It is your choice alone, in Settings. A colleague turning it on does not send your questions anywhere, even in a chat you share."],
+      "screens": [{"name": "tracing", "as": "member", "where": "settings", "scroll": "#trace-setting", "wait": "#trace-setting", "alt": "The tracing setting", "callouts": [
+        {"sel": "#trace-setting .ds-seg", "side": "top", "text": "Off, Structure (sizes and timings, no words) or Full. Off is where you start."}]}]
+    },
+    {
+      "id": "who-to-ask", "title": "Who to ask", "bert": "question",
+      "body": ["Me. Send me a message on LinkedIn: that is the one route, not email and not the website.",
+               "Tell me what you asked and what was wrong with the answer. If it is about access or a cap, say which login."],
+      "link": {"text": "Karim Lameer on LinkedIn", "href": "https://linkedin.com/in/karimlameer"}
+    }
+  ]
+}

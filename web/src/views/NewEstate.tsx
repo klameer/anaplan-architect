@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Bert, BertNote } from '../design/Bert'
 import { api, json, when } from '../api'
 import { href, useApp } from '../App'
+import { AccessChoice } from './Access'
 
 type Row = { id: number; name: string; li: File | null; ac: File | null; mo: File | null }
 type Manifest = { estate_id: string; name: string; exported_at: string; models: string[]; counts: Record<string, number>; conflict: { id: string; name: string } | null; blobs_missing: string[]; people: { id: string; name: string; role: string }[] }
@@ -15,7 +16,8 @@ export function modelNameFrom(file: string): string {
 }
 
 export function NewEstate() {
-  const { estates, reloadEstates, go, toast } = useApp()
+  const { estates, reloadEstates, go, toast, me } = useApp()
+  const [vis, setVis] = useState<'private' | 'shared'>('private')
   const [rows, setRows] = useState<Row[]>([{ id: 1, name: '', li: null, ac: null, mo: null }, { id: 2, name: '', li: null, ac: null, mo: null }])
   const [name, setName] = useState('')
   const [aliases, setAliases] = useState('')
@@ -42,7 +44,7 @@ export function NewEstate() {
   async function parseAndOpen() {
     const used = rows.filter(r => r.li)
     if (!used.length) { toast('Add at least one Line Items file'); return }
-    const fd = new FormData(); fd.append('name', name); fd.append('aliases', aliases)
+    const fd = new FormData(); fd.append('name', name); fd.append('aliases', aliases); fd.append('visibility', vis)
     const unnamed = used.findIndex(r => !(r.name.trim() || modelNameFrom(r.li!.name)))
     if (unnamed >= 0) { toast(`Name the model in row ${rows.indexOf(used[unnamed]) + 1}: its file (${used[unnamed].li!.name}) is named after the export, not the model.`); return }
     for (const r of used) {
@@ -56,7 +58,7 @@ export function NewEstate() {
   }
   async function registerOnly() {
     setBusy('Registering…')
-    try { const s = await api('/api/estates/create', json('POST', { name })); await reloadEstates(); go(href(s.id, 'home') + '/home/uploads') }
+    try { const s = await api('/api/estates/create', json('POST', { name, visibility: vis })); await reloadEstates(); go(href(s.id, 'home') + '/home/uploads') }
     catch (e: any) { toast(e.message) }
     finally { setBusy(null) }
   }
@@ -82,6 +84,8 @@ export function NewEstate() {
           <div><label>Estate name</label><input value={name} placeholder="e.g. Group planning" onChange={e => setName(e.target.value)} /></div>
           <div><label>Aliases (phrase=Model; phrase=Model) for import names that differ from model names</label><input value={aliases} placeholder="Headcount Model=HR; FPA=FP&A" onChange={e => setAliases(e.target.value)} /></div>
         </div>
+        {me?.user && <div id="access-choice"><label>Who can see it</label><AccessChoice value={vis} onChange={setVis} team={me.user.team || null} />
+          <div className="small muted" style={{ marginTop: 6 }}>You can change this later from the workspace's page. A restored backup always comes back private.</div></div>}
         <div className="actions">
           <button className="primary" disabled={!!busy} onClick={parseAndOpen}>Parse and open</button>
           <button disabled={!!busy} onClick={registerOnly}>Or register the estate first and upload later</button>
@@ -95,11 +99,11 @@ export function NewEstate() {
         <div className="row" style={{ gridTemplateColumns: '1fr 1fr auto' }}>
           <div><label>Backup file</label><input type="file" accept=".zip" onChange={e => { const f = e.target.files?.[0]; if (f) inspect(f) }} /></div>
           <div><label>Name (optional: restore under another name)</label><input value={rname} placeholder={man?.name || ''} onChange={e => setRname(e.target.value)} /></div>
-          <div><label>&nbsp;</label><button className="primary" disabled={!man || !!busy || !!man.conflict || man.blobs_missing.length > 0} onClick={restore}>Restore</button></div>
+          <div><label>&nbsp;</label><button className="primary" disabled={!man || !!busy || man.blobs_missing.length > 0} onClick={restore}>Restore</button></div>
         </div>
         {man && <div className="small" style={{ marginTop: 8 }}>
           <b>{man.name}</b> · exported {when(man.exported_at)} · models: {man.models.join(', ') || 'none'} · {man.counts.snapshots || 0} snapshot{man.counts.snapshots !== 1 ? 's' : ''}, {man.counts.notes || 0} note{man.counts.notes !== 1 ? 's' : ''}, {man.counts.conversations || 0} conversation{man.counts.conversations !== 1 ? 's' : ''}, {man.counts.proposals || 0} proposal{man.counts.proposals !== 1 ? 's' : ''}{man.people.length ? ` · people named: ${man.people.map(p => p.name || p.id).join(', ')}` : ''}
-          {man.conflict && <div className="warn" style={{ marginTop: 4 }}>An estate with this id is already here ({man.conflict.name}). Ids are kept on restore so old citations open, so delete that estate first, or restore on another server.</div>}
+          <div className="muted" style={{ marginTop: 4 }}>It comes back as a new workspace of yours, private, with everything in it under your name, beside any workspace it was taken from. {(man as any).held_others ? 'This backup held chats, notes or documents that other people added, so the copy cannot be shared with a team unless the admin allows it.' : ''}</div>
           {man.blobs_missing.length > 0 && <div className="warn" style={{ marginTop: 4 }}>{man.blobs_missing.length} export file{man.blobs_missing.length !== 1 ? 's are' : ' is'} missing from the archive; it cannot be restored.</div>}
         </div>}
       </div>

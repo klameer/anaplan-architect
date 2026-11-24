@@ -88,10 +88,13 @@ def test_chat_completions_round_trip_and_a_whole_turn(tmp_path, monkeypatch):
 def test_a_failed_codex_token_refresh_does_not_repeat_what_the_token_service_said(tmp_path, monkeypatch):
     """Not covered by either review of 2026-11-13 (codex.py). A failed refresh put the token service's reply into the
     error, and a model error is shown to whoever asked the question. The error names the status, not the reply."""
-    import httpx
+    import io, urllib.request, urllib.error
     p = tmp_path / "auth.json"
     p.write_text(json.dumps({"tokens": {"access_token": "", "refresh_token": "rt-abc"}}), encoding="utf-8")
-    monkeypatch.setattr(httpx, "post", lambda *a, **kw: NS(status_code=401, text='{"error":"invalid_grant","account":"someone@example.org","detail":"refresh token rt-abc revoked"}', json=lambda: {}))
+
+    def refused(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, io.BytesIO(b'{"error":"invalid_grant","account":"someone@example.org","detail":"refresh token rt-abc revoked"}'))
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
     with pytest.raises(codex.CodexAuthError) as e:
         codex.CodexAuth(p).access_token()
     said = str(e.value)

@@ -67,7 +67,13 @@ def test_a_stranger_gets_the_two_libraries_at_the_pinned_commits_everywhere():
     assert "git" in readme.lower() and "tool.hatch.metadata" in (root / "pyproject.toml").read_text(encoding="utf-8")
     # the image installs everything else at fixed versions
     cons = {ln.split("==")[0].lower().replace("_", "-"): ln.split("==")[1] for ln in (root / "constraints.txt").read_text(encoding="utf-8").split() if "==" in ln}
-    assert "-c constraints.txt" in docker and "constraints.txt" in docker.split("COPY pyproject.toml")[1].splitlines()[0]
+    # both install steps, the two libraries' own dependencies included, and the file is there before the first of them
+    assert docker.count("pip install -c constraints.txt") == 3 and "pip install /wheels" not in docker and 'pip install "git+' not in docker
+    assert docker.index("COPY constraints.txt") < docker.index("pip install -c constraints.txt")
+    # the server does not run as root: the entrypoint drops to the unprivileged user after making the volume the app's own
+    entry = (root / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]' in docker and "setpriv --reuid=10001 --regid=10001" in entry and "\r" not in entry
+    assert "docker-entrypoint.sh" in (root / ".dockerignore").read_text(encoding="utf-8") or "docker-entrypoint.sh" not in [ln.strip() for ln in (root / ".dockerignore").read_text(encoding="utf-8").splitlines()]
     wanted = {re.split(r"[\[<>=!~ ]", d, 1)[0].lower().replace("_", "-") for group in project["optional-dependencies"].values() for d in group} - {"playwright"}
     assert wanted <= set(cons), sorted(wanted - set(cons))
     assert all(re.fullmatch(r"[0-9][0-9A-Za-z.]*", v) for v in cons.values()) and len(cons) > 25
@@ -185,3 +191,25 @@ def test_no_request_and_no_archive_can_ask_for_unbounded_memory(tmp_path, monkey
     p = tmp_path / "bomb.zip"; p.write_bytes(buf.getvalue())
     with pytest.raises(ValueError, match="too large"):
         backup.inspect_archive(p)
+
+
+def test_the_entrypoint_says_plainly_why_it_stopped_and_never_falls_back_to_root(tmp_path):
+    """The image's first real build is the host's (2026-11-24), so the entrypoint must fail loudly. The paths for a user
+    that is not root are run here in a plain shell; the root path cannot be, and the docs say so."""
+    import shutil, subprocess
+    root = pathlib.Path(__file__).resolve().parents[1]
+    entry = (root / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert entry.count("|| fail ") >= 5 and "exit 70" in entry and "STOPPED." in entry
+    # after the drop is proved there is one way on, and it is as uid 10001: no line starts the command as root
+    tail = entry.split('if [ "$UID_NOW" = "0" ]; then', 1)[1].split("\nfi\n", 1)[0]
+    assert tail.rstrip().endswith('exec setpriv --reuid=10001 --regid=10001 --init-groups -- "$@"') and 'exec "$@"' not in tail
+    sh = shutil.which("sh")
+    if not sh:
+        pytest.skip("no POSIX shell on this machine")
+    import os
+    env = dict(os.environ, ARCHITECT_DATA=(tmp_path / "data").as_posix()); env.pop("RAILWAY_VOLUME_MOUNT_PATH", None)
+    ok = subprocess.run([sh, (root / "docker-entrypoint.sh").as_posix(), "echo", "started"], capture_output=True, text=True, env=env)
+    assert ok.returncode == 0 and ok.stdout.strip() == "started" and "not root" in ok.stderr
+    blocked = tmp_path / "a-file"; blocked.write_text("x")
+    bad = subprocess.run([sh, (root / "docker-entrypoint.sh").as_posix(), "echo", "started"], capture_output=True, text=True, env=dict(env, ARCHITECT_DATA=(blocked / "data").as_posix()))
+    assert bad.returncode == 70 and "started" not in bad.stdout and "architect entrypoint: STOPPED." in bad.stderr and "data folder" in bad.stderr

@@ -14,7 +14,7 @@ fresh export makes a full snapshot with every other model unchanged, and the
 per-file upload dates show which is which.
 """
 from __future__ import annotations
-import json, os, shutil, tempfile, threading, zipfile
+import hashlib, json, os, re, shutil, tempfile, threading, zipfile
 from pathlib import Path
 from .db import Db, now, new_id
 from .blobs import BlobStore
@@ -191,7 +191,8 @@ class Snapshots:
         m = reg.get_model(self.db, model_id)
         if not m or m["estate_id"] != s["estate_id"]:
             raise ValueError("that model is not in this estate")
-        name = Path(original_name or "").name or FILE_NAMES[kind]
+        # the name a browser sent is text, not a path: its last part, plain characters only, never '.' or '..'
+        name = re.sub(r"[^\w .()\[\]&+,=-]", "_", Path((original_name or "").replace("\\", "/")).name).strip(" .")[:120] or FILE_NAMES[kind]
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / name
             p.write_bytes(data)
@@ -252,6 +253,48 @@ class Snapshots:
         if not s:
             raise KeyError(sid)
         return self.data / "estates" / s["estate_id"] / "snapshots" / sid
+
+    # ---------- the parse cache is a pickle: only one this server sealed is ever opened ----------
+    # A pickle runs code when it is loaded, so the cache is only as safe as the folder it sits in. Nothing a login
+    # sends is written there under a name of its choosing (exports land under fixed names in a folder per model, and a
+    # restore writes only inside the workspace's .architect folder). The seal is the second lock: a keyed hash of the
+    # file, with a key kept in the store and never on the volume beside it. A cache with no seal, or with one that
+    # does not match, is not opened: the exports are read again (security review 2026-11-24).
+    def _cache_secret(self) -> bytes:
+        import secrets
+        row = self.db.one("SELECT value FROM settings WHERE key='parse_cache_secret' LIMIT 1")
+        if not row:
+            self.db.run("INSERT OR IGNORE INTO settings(workspace_id, key, value) VALUES (?,?,?)", reg.default_workspace(self.db), "parse_cache_secret", secrets.token_hex(32))
+            row = self.db.one("SELECT value FROM settings WHERE key='parse_cache_secret' LIMIT 1")
+        return bytes.fromhex(row["value"])
+
+    def _mac(self, root: Path, key: str) -> str | None:
+        import hmac
+        try:
+            h = hmac.new(self._cache_secret(), key.encode("utf-8") + b"\0", hashlib.sha256)
+            with open(Path(root) / "estate.pkl", "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+        except OSError:
+            return None
+
+    def _seal(self, root: Path, key: str) -> None:
+        mac = self._mac(root, key)
+        if mac:
+            (Path(root) / "estate.mac").write_text(mac, encoding="utf-8")
+
+    def _open(self, root: Path, key: str):
+        import hmac
+        from . import parsework
+        try:
+            want = (Path(root) / "estate.mac").read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        got = self._mac(root, key)
+        if not got or not hmac.compare_digest(want, got):
+            return None
+        return parsework.load(root, key)
 
     def materialise(self, sid: str) -> tuple[Path, dict[str, str]]:
         """Write the snapshot's files where fleet.discover finds them: one folder per model named
@@ -315,7 +358,8 @@ class Snapshots:
         key = self.cache_key(sid, names)
         if not self.subprocess:
             res = parsework.work(str(root), aliases, names, key)
-            er = parsework.load(root, key)
+            self._seal(root, key)
+            er = self._open(root, key)
             return er, res
         import multiprocessing, subprocess, sys, time
         spec = root / "spec.json"
@@ -343,7 +387,8 @@ class Snapshots:
             raise RuntimeError(f"the parse process ended without a result (exit {proc.returncode}): {err[-800:]}")
         if not res.get("ok"):
             raise RuntimeError(res.get("error") or f"parse failed (exit {proc.returncode})")
-        er = parsework.load(root, key)
+        self._seal(root, key)
+        er = self._open(root, key)
         if er is None:
             raise RuntimeError("the parse process wrote no usable estate.pkl")
         return er, res
@@ -418,7 +463,7 @@ class Snapshots:
                 raise KeyError(sid)
             root, names = self.materialise(sid)
             key = self.cache_key(sid, names)
-            er = parsework.load(root, key)
+            er = self._open(root, key)
             if er is None:
                 if not block and self.refresher is not None:
                     st = self.refresher(sid) or {}

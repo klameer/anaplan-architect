@@ -1,7 +1,8 @@
 """Tracing: the full trace of a conversation as a hierarchy, in LangSmith (the demo story, 2026-09-28; LangSmith
 since 2026-11-13, the v0.2 plan, "Tracing").
 
-One LangSmith trace per conversation: a root run (run_type "chain") named by the conversation's title, created on its
+One LangSmith trace per conversation: a root run (run_type "chain") named "conversation" (never by the chat's title,
+which is the first question of whoever started it), created on its
 first turn and remembered through the conversation's trace state (trace id, root run id, the root's dotted order, host,
 project), so every later turn, on any server start, attaches under the same root. Under the root, one chain run per
 turn (named by the question), and under each turn, in the order things happened: an "llm" run for every model call
@@ -376,8 +377,10 @@ class LangSmithTurn:
                 root = None
         if root is None:
             # the conversation's first turn on this store: one trace, with the conversation as its root run
-            title = (conv.get("title") or self.name or "conversation")[:120]
-            root = self._create(title, "chain", {"conversation": title}, None, (conv.get("metadata") or self.metadata or {}) | self._who())
+            # Named "conversation", with the chat's id as its input, never by its title: a title is the first question of whoever started the chat, and
+            # in a shared workspace that may be a team-mate who sends nothing to the tracer (security review 2026-11-24).
+            title = "conversation"
+            root = self._create(title, "chain", {"conversation": str(conv.get("id") or "")[:40]}, None, (conv.get("metadata") or self.metadata or {}) | self._who())
             state = {"trace_id": str(root.id), "root_run_id": str(root.id), "root_dotted_order": root.dotted,
                      "host": self.tracer.host, "project": self.tracer.project}
             save = conv.get("save")

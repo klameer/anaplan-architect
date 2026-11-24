@@ -10,6 +10,7 @@ import { ModelsSection } from './Models'
 import { NotesSummary } from './NotesSummary'
 import { EstateSettings } from './Home'
 import { Icon, Sec } from './Answer'
+import { AccessStrip } from './Access'
 
 export function WorkspacePage() {
   const { route, summary: s, go, toast } = useApp()
@@ -32,6 +33,7 @@ export function WorkspacePage() {
       <div className="ds-kick"><span className="type">Workspace</span><span className="k">· the estate at a glance{s.snapshot ? ` · read ${s.snapshot.activated_at?.slice(0, 10)}` : ''}</span><span className="grow" />
         {s.snapshot && <><a className="ds-tag" href={href(eid, 'size')}>size →</a><a className="ds-tag" href={`/api/estates/${s.id}/report`} target="_blank" rel="noreferrer">deterministic report ↗</a></>}</div>
       <h1 className="ds-q">{s.name}</h1>
+      {(s as any).access && <AccessStrip eid={eid} a={(s as any).access} />}
       <div className="ds-askrow"><Bert state="neutral" place="workspace-ask" size={40} /><div className="ds-askbar"><input value={q} placeholder={s.snapshot ? 'Ask anything about this workspace…' : 'Upload the exports below, then ask.'} disabled={!s.snapshot} onChange={e => setQ(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(q) }} /><button className="send" disabled={!s.snapshot || !q.trim()} onClick={() => ask(q)} title="Ask"><Icon d="M5 12h14M13 6l6 6-6 6" s={15} /></button></div></div>
       {s.snapshot ? <Dashboard s={s} onAsk={ask} bare /> : <p className="ds-gap">Nothing is uploaded yet. A workspace is one estate: one or more models, each known from its Line Items export and, if you have them, its Modules and Actions exports.</p>}

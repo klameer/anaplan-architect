@@ -16,7 +16,7 @@ Layout under --data:
   estates/<id>/{meta.json,models/}     the pre-Orac layout, imported once at startup and left in place
 """
 from __future__ import annotations
-import datetime, json, os, re, shutil, tempfile, threading
+import datetime, json, os, re, shutil, sqlite3, tempfile, threading, time
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response
@@ -44,6 +44,10 @@ OPEN_PATHS = {"/api/auth/me", "/api/auth/login", "/health"}
 WORKSPACES_MAX = 16       # parsed workspaces kept ready; one more than that and the least recently opened is read again from its cache on next use
 SESSIONS_MAX = 32          # live conversations kept in memory; the oldest idle ones go, and come back from the store on their next message
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+NOT_COUNTED = ("The store was busy and the cost of this question could not be recorded, so the answer was stopped: a model call is never counted as free. "
+               "Ask again in a moment.")
+STORE_BUSY = "The store is busy for a moment. Nothing was changed: try again in a few seconds."
+NOTHING = "nothing here by that id"       # the one answer for an id that is not yours, whether or not it exists
 MAX_QUESTION_CHARS = 8000
 TRACE_LEVELS = ("off", "structure", "content")
 TRACE_THEIR_OWN = "what a login sends to the tracer is their own choice, made in their own Settings: it cannot be set for them"
@@ -97,7 +101,8 @@ def model_error(e: Exception) -> tuple[int, str]:
         return 502, "The model provider refused this instance's key. Whoever runs the instance needs to check it; asking again will not help."
     if "timed out" in text or "timeout" in text:
         return 504, "The model took too long to answer. Try again; if it keeps happening, ask something narrower."
-    return 502, f"the model call failed: {e}"
+    print(f"  model call failed: {type(e).__name__}: {str(e)[:500]}", flush=True)      # the provider's own words stay in the server's log
+    return 502, "The model call failed. Try again; if it keeps happening, whoever runs this instance can see why in its log."
 
 
 def create_app(data: str | Path, api_key: str | None = None, model_id: str = "claude-sonnet-5", client_factory=None, host: str = "127.0.0.1",
@@ -133,6 +138,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     app.state.api_key = app.state.backend["client_kw"].get("api_key")
     app.state.model_id = app.state.backend["model"] or model_id
     app.state.provider = app.state.backend["provider"]
+    from . import chat as _chat
+    flat = app.state.provider == "codex"                 # a flat-rate subscription: nothing is billed per call there
     app.state.tracer = tracer if tracer is not None else telemetry.default(refresh=True)   # after envfile.load: the keys may sit in .env
     app.state.client_factory = client_factory
     app.state.summaries = client_factory is None and app.state.provider != "none"      # document cards are summarised by the model when the server has one
@@ -165,6 +172,30 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             print(f"could not create the admin from ARCHITECT_ADMIN_USER: {ex}")
     app.state.loopback = loopback
 
+    @app.exception_handler(Exception)
+    async def _not_that_shape(request: Request, exc: Exception):
+        """The one place a request that is not in the shape its route takes is answered. A field that should be text and
+        is a list, a number where a name belongs, a zip whose headers lie, text that is not text: the handler trips
+        over it somewhere, and that is the caller's mistake, said as a 400 in words. Anything else is the server's:
+        a 500 in words, with the detail in the server's log and never on the page."""
+        import traceback, zipfile, zlib
+        if isinstance(exc, sqlite3.OperationalError):
+            return await _store_busy(request, exc)
+        caller = request.method in MUTATING and isinstance(exc, (TypeError, AttributeError, ValueError, KeyError, IndexError, UnicodeError, zipfile.BadZipFile, zlib.error, EOFError, sqlite3.Error))
+        if caller:
+            print(f"  {request.method} {request.url.path}: not in the shape this route takes ({type(exc).__name__}: {str(exc)[:200]})", flush=True)
+            return JSONResponse({"detail": "That request is not in the shape this takes: a field is missing, or is not the kind of value expected."}, status_code=400)
+        print(f"  {request.method} {request.url.path} failed:\n" + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-3000:], flush=True)
+        return JSONResponse({"detail": "Something went wrong on the server. Whoever runs this instance can see what in its log."}, status_code=500)
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def _store_busy(request: Request, exc: sqlite3.OperationalError):
+        """SQLite lets one writer in at a time and waits thirty seconds for its turn. Past that, the request is told
+        so in words: a sign-in or a save that could not be written is a 503 to try again, never a bare 500."""
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            return JSONResponse({"detail": STORE_BUSY}, status_code=503, headers={"retry-after": "5"})
+        return JSONResponse({"detail": "The store could not do that. Whoever runs this instance can see why in its log."}, status_code=500)
+
     # ---------- several people at once ----------
     # One process serves everyone. The live workspaces and chats are shared dictionaries: one lock for changing them.
     # An answer holds a worker thread while the model writes, and reading exports is a process of its own with the files
@@ -173,7 +204,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     cache_lock = threading.RLock()
     building: dict[tuple[str, str], threading.Lock] = {}
     limits = {"chats_per_login": _int_env("ARCHITECT_MAX_CHATS_PER_LOGIN", 2), "chats": _int_env("ARCHITECT_MAX_CHATS", 16),
-              "export_reads": _int_env("ARCHITECT_MAX_EXPORT_READS", 2)}
+              "export_reads": _int_env("ARCHITECT_MAX_EXPORT_READS", 2), "document_reads": _int_env("ARCHITECT_MAX_DOCUMENT_READS", 2),
+              "restores": _int_env("ARCHITECT_MAX_RESTORES", 1), "storage_mb_per_login": _int_env("ARCHITECT_MAX_STORAGE_MB_PER_LOGIN", 2000)}
     try:
         limits["export_wait_s"] = max(0.0, float(os.environ.get("ARCHITECT_EXPORT_WAIT_S") or 20))
     except ValueError:
@@ -182,6 +214,14 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     app.state.in_flight = {"total": 0, "by_login": {}}
     flight_lock = threading.Lock()
     export_gate = threading.BoundedSemaphore(limits["export_reads"])
+    gates = {"export": export_gate, "document": threading.BoundedSemaphore(limits["document_reads"]), "restore": threading.BoundedSemaphore(limits["restores"])}
+    heavy: set[tuple[str, str]] = set()              # (kind, login) at work now: one of each kind per login, so one login cannot hold every slot
+    BUSY_SELF = {"export": "You already have a set of exports being read. Wait for it to finish, then send the next.",
+                 "document": "You already have documents being read. Wait for them to finish, then send the next.",
+                 "restore": "You already have a backup being restored. Wait for it to finish."}
+    BUSY_ALL = {"export": "The instance is reading other people's exports right now. Nothing of yours was kept: give it a minute and try again.",
+                "document": "The instance is reading other people's documents right now. Nothing of yours was kept: give it a minute and try again.",
+                "restore": "The instance is restoring someone else's backup right now. Nothing of yours was kept: give it a minute and try again."}
 
     def _enter_chat(uid: str | None) -> None:
         f, k = app.state.in_flight, uid or "-"
@@ -204,14 +244,37 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 f["by_login"].pop(k, None)
 
     @contextmanager
-    def _export_slot():
-        """Held while one set of exports is read. Waits a little for a free slot, then says try again."""
-        if not export_gate.acquire(timeout=limits["export_wait_s"]):
-            raise HTTPException(429, "The instance is reading other people's exports right now. Nothing of yours was kept: give it a minute and try again.", headers={"retry-after": "30"})
+    def _export_slot(uid: str | None = None, kind: str = "export"):
+        """Held while one set of exports is read, one batch of documents, or one backup restored. A login has one of
+        each kind at a time; the instance a few. Waits a little for a free slot, then says try again."""
+        mine = (kind, uid) if uid else None
+        if mine:
+            with flight_lock:
+                if mine in heavy:
+                    raise HTTPException(429, BUSY_SELF[kind], headers={"retry-after": "15"})
+                heavy.add(mine)
         try:
-            yield
+            if not gates[kind].acquire(timeout=limits["export_wait_s"]):
+                raise HTTPException(429, BUSY_ALL[kind], headers={"retry-after": "30"})
+            try:
+                yield
+            finally:
+                gates[kind].release()
         finally:
-            export_gate.release()
+            if mine:
+                with flight_lock:
+                    heavy.discard(mine)
+
+    def _room(uid: str | None, more: int = 0) -> None:
+        """A login's uploads have a ceiling on the volume: the export files of the workspaces it made, and what is coming."""
+        if not uid:
+            return
+        used = db.one("SELECT COALESCE(SUM(b.bytes),0) AS n FROM blobs b WHERE b.sha256 IN (SELECT f.blob_sha FROM snapshot_files f JOIN snapshots s ON s.id=f.snapshot_id "
+                      "JOIN estates e ON e.id=s.estate_id WHERE e.created_by=?)", uid)["n"]
+        cap = limits["storage_mb_per_login"] * 1024 * 1024
+        if used + more > cap:
+            raise HTTPException(413, f"This login's workspaces hold {used / 1e6:,.0f} MB of export files, and the limit is {limits['storage_mb_per_login']:,} MB. "
+                                     "Delete an upload or a workspace you no longer need, then send this again.")
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
@@ -250,10 +313,13 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                         return JSONResponse({"detail": "missing or stale CSRF token: reload the page and try again"}, status_code=403)
                 # the one place membership is checked: a path that names a workspace, or anything that lives in one, is
                 # answered only to a member. To anyone else it does not exist.
-                scoped, eid = access.estate_for(db, path, _live_citation_estate)
-                admin_delete = request.method == "DELETE" and request.state.user["role"] == "owner" and path.rstrip("/") == f"/api/estates/{eid}"
-                if scoped and eid is not None and not admin_delete and not access.is_member(db, request.state.user, eid):
-                    return JSONResponse({"detail": "nothing here by that id"}, status_code=404)
+                # An id that is not in the store gets the same answer as one that is and is not yours: nothing says which.
+                u = request.state.user
+                scoped, eid = access.estate_for(db, path, _live_citation_estates, member=lambda e: access.is_member(db, u, e))
+                admin_delete = request.method == "DELETE" and u["role"] == "owner" and eid is not None and path.rstrip("/") == f"/api/estates/{eid}"
+                if scoped and not admin_delete and (eid is None or not access.is_member(db, u, eid)):
+                    return JSONResponse({"detail": NOTHING}, status_code=404)
+                request.state.estate = eid if scoped else None
         return None
 
 
@@ -262,11 +328,28 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         refused = await run_in_threadpool(_authorise, request)
         return refused if refused is not None else await call_next(request)
 
-    def _live_citation_estate(cid: str) -> str | None:
-        for s in list(getattr(app.state, "sessions", {}).values()):
-            if s.ev.resolve(cid) is not None:
-                return s.w.estate_id
-        return None
+    def _live_citation_estates(cid: str) -> list[str]:
+        return sorted({s.w.estate_id for s in list(getattr(app.state, "sessions", {}).values()) if s.ev.resolve(cid) is not None})
+
+    def _maker_only(request: Request, eid: str, what: str) -> None:
+        """In a shared workspace: renaming it, archiving it, taking a backup and removing its uploads are its maker's.
+        A private workspace is as it was: whoever is in it does all of it."""
+        u = getattr(request.state, "user", None)
+        if not u or not access.shared(db, eid):
+            return
+        maker = access.creator(db, eid)
+        if maker != u["id"]:
+            name = access.describe(db, u, eid)["creator"]
+            raise HTTPException(403, f"only {name}, who made this workspace, can {what}" if name else f"this workspace has no maker now: the admin names one, and then they can {what}")
+
+    def _theirs(request: Request, eid: str, author: str | None, what: str) -> None:
+        """In a shared workspace a team-mate adds, and changes or removes only what they added; its maker any of it."""
+        u = getattr(request.state, "user", None)
+        if not u or not access.shared(db, eid) or author == u["id"] or access.creator(db, eid) == u["id"]:
+            return
+        names = _names([author, access.creator(db, eid)])
+        whose = " or ".join(dict.fromkeys(x for x in (names.get(author) and f"{names[author]}, who added it", names.get(access.creator(db, eid)) and f"{names[access.creator(db, eid)]}, who made this workspace") if x))
+        raise HTTPException(403, f"only {whose or 'whoever added it'} can {what}")
 
     def who(request: Request) -> str | None:
         u = getattr(request.state, "user", None)
@@ -280,6 +363,43 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise HTTPException(403, "the owner of this workspace does that")
         return u
 
+    def _named(u: dict | None) -> dict | None:
+        """A login as the page gets it: with the name of its team, never the team's id alone."""
+        if not u:
+            return u
+        t = access.team_of(db, u["id"])
+        return dict(u, team=t["name"] if t else None)
+
+    def _names(ids) -> dict:
+        """Login id -> name, for saying who asked a question or added a note or a document in a shared workspace."""
+        ids = sorted({i for i in ids if i})
+        if not ids:
+            return {}
+        return {r["id"]: r["name"] for r in db.q(f"SELECT id, name FROM users WHERE id IN ({','.join('?' * len(ids))})", *ids)}
+
+    def _team_arg(body: dict, by: str):
+        """The team an admin names for a login: ("keep", None) when the body does not say, else ("set", team id or None)."""
+        if "new_team" in body:
+            try:
+                return "set", access.create_team(db, ws_id, body["new_team"], by, confirmed=body.get("confirm_team") is True)["id"]
+            except access.Confusable as ex:
+                raise HTTPException(409, {"message": str(ex), "confusable": ex.existing})
+            except ValueError as ex:
+                raise HTTPException(400, str(ex))
+        if "team" not in body:
+            return "keep", None
+        name = body.get("team")
+        if name is None or name == "":
+            return "set", None
+        if not isinstance(name, str):
+            raise HTTPException(400, "a team is named by its name, as text")
+        if not access.team_clean(name):
+            return "set", None
+        t = access.find_team(db, ws_id, name) or db.one("SELECT id, name FROM teams WHERE workspace_id=? AND id=?", ws_id, name)
+        if not t:
+            raise HTTPException(400, f"there is no team called {access.team_clean(name)[:80]}: pick one from the list, or make it as a new team first")
+        return "set", t["id"]
+
     def _operator_notice() -> str:
         """What whoever runs this instance can see, said before anyone uploads: usage figures always; with tracing, what
         goes to the trace store."""
@@ -287,7 +407,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         out = "Whoever runs this instance can see usage figures for each login: sign-ins, and counts of workspaces, uploads, documents, questions and spend."
         if t.enabled:
             out += (" Tracing to LangSmith is set up here. Your questions are not sent to it: nothing is, unless you turn that on for yourself in Settings. "
-                    "The admin's own questions are traced.")
+                    "The admin's own questions are traced: those of the login this instance was set up with.")
         return out
 
     def _me(request: Request) -> dict:
@@ -295,7 +415,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         none = auth.no_accounts(db)
         user = getattr(request.state, "user", None)
         out = {"notice": (os.environ.get("ARCHITECT_NOTICE") or NOTICE) + " " + _operator_notice(), "demo": bool(demomod.root()),
-               "open": none and loopback, "closed": none and not loopback, "accounts": not none, "user": user}
+               "open": none and loopback, "closed": none and not loopback, "accounts": not none, "user": _named(user)}
         if none and not loopback:
             out["console_hint"] = CONSOLE_HINT
         if not user and not (none and loopback):         # nobody signed in on an instance with logins: what the sign-in page needs, nothing about the server
@@ -304,8 +424,40 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 "provider_reason": app.state.backend.get("reason") or "", "tracing": app.state.tracer.status(), "host": request.url.hostname, "console_hint": CONSOLE_HINT}
         out["trace"] = _trace(user)
         if not user or user.get("role") == "owner":      # where the store is on the server's disk, and what it is bound to: the admin's to see
-            out |= {"data_dir": str(data.resolve()), "bind": app.state.host}
+            src = (os.environ.get("ARCHITECT_CLIENT_ADDRESS") or "").strip().lower()
+            out |= {"data_dir": str(data.resolve()), "bind": app.state.host,
+                    # the address the sign-in limits count this request under, and where it was read from
+                    "address": _address(request) or "", "address_source": ("the connection itself" if not app.state.hosted else (src if _address(request) else "")) or "not set"}
         return out
+
+    def _address(request: Request) -> str | None:
+        """Where a request came from, for the sign-in limits. On a machine of its own: the peer. Behind a proxy (hosted
+        mode): the entry the proxy itself appended to X-Forwarded-For, counted from the right (ARCHITECT_PROXY_HOPS,
+        one proxy by default). Anything further left was written by the caller and is never believed: a caller who
+        sends a new made-up address with every try would otherwise never reach a limit (security review 2026-11-24, M2)."""
+        peer = request.client.host if request.client else None
+        if not app.state.hosted:
+            return peer
+        how = (os.environ.get("ARCHITECT_CLIENT_ADDRESS") or "").strip().lower()
+        parts = [p.strip() for p in (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+        if not how or how == "none":
+            # Not told where the proxy states the caller's address: no header is believed. Every caller is the same
+            # unknown one, and sign-in is limited by name alone, as it was before addresses were looked at.
+            return None
+        if how == "peer":
+            return peer
+        if how != "x-real-ip" and not how.startswith("xff"):
+            return None
+        if how.startswith("xff"):                         # xff:1 is the rightmost entry, xff:2 the one before it
+            try:
+                n = max(1, int(how.split(":", 1)[1])) if ":" in how else 1
+            except ValueError:
+                n = 1
+            return parts[-n] if len(parts) >= n else (parts[-1] if parts else peer)
+        # x-real-ip: the header the proxy sets with the address it saw. Only to be chosen where the proxy REPLACES a
+        # copy the caller sent; where it passes the caller's through, every try can claim a new address.
+        real = (request.headers.get("x-real-ip") or "").split(",")[-1].strip()
+        return real or None
 
     def _sign_in(response: Response, request: Request, token: str) -> None:
         secure = app.state.hosted or request.url.scheme == "https"      # behind a proxy the app sees http: hosted mode says the outside is https
@@ -319,7 +471,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     @app.post("/api/auth/login")
     def auth_login(request: Request, response: Response, body: dict):
         try:
-            u, token = auth.login(db, body.get("email", ""), body.get("password", ""), address=request.client.host if request.client else None)
+            if not isinstance(body, dict) or not isinstance(body.get("email", ""), str) or not isinstance(body.get("password", ""), str):
+                raise HTTPException(400, "a username and a password, as text")
+            u, token = auth.login(db, body.get("email", ""), body.get("password", ""), address=_address(request))
         except auth.TooManyAttempts as ex:
             raise HTTPException(429, f"too many failed sign-ins: try again in {max(1, ex.retry_after // 60)} minute{'s' if ex.retry_after >= 120 else ''}", headers={"retry-after": str(ex.retry_after)})
         except PermissionError as ex:
@@ -348,7 +502,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return {"users": rows, "default_cap_usd": auth.default_cap(),
                 "totals": {"logins": len(rows), "questions": sum(r["questions"] for r in rows), "cost_usd": round(sum(r["cost_usd"] for r in rows), 4),
                            "metered_usd": round(sum(r["metered_usd"] for r in rows), 4), "workspaces": db.one("SELECT COUNT(*) AS n FROM estates")["n"]},
-                "note": "metered is what the tokens cost at list price; on a flat-rate route nothing is billed, and the cap still counts the metered amount"}
+                "billed_known": bool(flat or app.state.model_id.startswith("claude") or _chat.price_of(app.state.model_id)),
+                "note": ("metered is what the tokens cost at list price; on a flat-rate route nothing is billed, and the cap still counts the metered amount"
+                         if flat or app.state.model_id.startswith("claude") or _chat.price_of(app.state.model_id) else
+                         f"no price is known for {app.state.model_id}: the cap counts each call at the Sonnet 5 list price, and billed is unknown, not zero. "
+                         "Set ARCHITECT_PRICE_IN and ARCHITECT_PRICE_OUT (USD per million tokens) to what the account is charged")}
 
     @app.post("/api/admin/users")
     def admin_create_user(request: Request, body: dict):
@@ -358,12 +516,18 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise HTTPException(400, TRACE_THEIR_OWN)
         pw = (body.get("password") or "").strip() or auth.generate_password()
         cap = body.get("cap_usd", "default")
+        had = {t["id"] for t in access.teams(db, ws_id)}
+        how, tid = _team_arg(body, u["id"])               # a team that is not on the list is refused before the login is made
         try:
             new = auth.create_user(db, ws_id, body.get("username") or body.get("email") or "", body.get("name") or "", pw, role="member", by=u["id"],
                                    cap_usd=("default" if cap in ("default", "") else (None if cap is None else float(cap))))
         except ValueError as ex:
+            if tid and tid not in had:                    # the new team was for this login, and there is no login
+                db.run("DELETE FROM teams WHERE id=?", tid)
             raise HTTPException(400, str(ex))
-        out = {"user": new, "password": pw, "note": "hand over the username and this password; it is not shown again"}
+        if how == "set" and tid:
+            access.set_team(db, new["id"], tid, by=u["id"])
+        out = {"user": _named(new), "password": pw, "note": "hand over the username and this password; it is not shown again"}
         if body.get("demo", True) and demomod.root():
             out["demo"] = demo_reset(new["id"])["workspaces"]
         return out
@@ -377,7 +541,19 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             kw = {}
             if "cap_usd" in body:
                 kw["cap_usd"] = None if body["cap_usd"] in (None, "") else float(body["cap_usd"])
+            target = db.one("SELECT role, team_id FROM users WHERE id=?", uid)
+            if not target:
+                raise KeyError(uid)
+            how, tid = _team_arg(body, u["id"])
+            role_after = body.get("role") or target["role"]
+            team_after = tid if how == "set" else target["team_id"]
+            if role_after == "owner" and team_after:      # an admin is in no team: a team's shared workspaces are its members' to read
+                raise ValueError("an admin is in no team: a team's shared workspaces are its members' to read, not the admin's. "
+                                 + ("Take this login out of its team first." if target["role"] != "owner" else "Use a second, ordinary login to work in a team."))
             out = {"user": auth.update_account(db, uid, u["id"], disabled=body.get("disabled"), role=body.get("role"), **kw)}
+            if how == "set":                              # moved to another team, or to none: what the old team shared is gone for this login at once
+                out |= access.set_team(db, uid, tid, by=u["id"])
+            out["user"] = _named(out["user"])
             if body.get("reset_password"):
                 pw = (body.get("password") or "").strip() or auth.generate_password()
                 auth.set_password(db, uid, pw, by=u["id"])
@@ -388,6 +564,48 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except ValueError as ex:
             raise HTTPException(400, str(ex))
 
+    @app.get("/api/admin/teams")
+    def admin_teams(request: Request):
+        """The teams (companies) on this instance, with how many logins and shared workspaces each has."""
+        owner(request)
+        return {"teams": access.teams(db, ws_id)}
+
+    @app.post("/api/admin/teams")
+    def admin_new_team(request: Request, body: dict):
+        """A new team, by name. Its own action: typing a name on a login never makes one."""
+        u = owner(request)
+        try:
+            return access.create_team(db, ws_id, (body or {}).get("name"), by=u["id"], confirmed=(body or {}).get("confirm") is True)
+        except access.Confusable as ex:                   # reads like a team that is here: asked, not refused
+            raise HTTPException(409, {"message": str(ex), "confusable": ex.existing})
+        except ValueError as ex:
+            raise HTTPException(400, str(ex))
+
+    @app.patch("/api/admin/workspaces/{eid}")
+    def admin_set_visibility(request: Request, eid: str, body: dict):
+        """The admin makes a workspace private again, or names the maker of a shared one whose maker has left its
+        team, from the admin panel: without opening it. Sharing is never the admin's: only its maker shares a
+        workspace. Not a route of the workspace itself, so the membership gate is untouched."""
+        u = owner(request)
+        if not reg.get_estate(db, eid):
+            raise HTTPException(404, "no such workspace")
+        lost = {}
+        try:
+            if body.get("maker") is not None:
+                access.set_maker(db, eid, str(body["maker"]), by=u["id"])
+            if body.get("allow_sharing") is True:        # a workspace restored from a backup that held other people's content: the admin's to allow
+                access.allow_sharing(db, eid, by=u["id"])
+            if "visibility" in body:
+                if body["visibility"] != "private":
+                    raise ValueError("only the maker of a workspace shares it: the admin can make one private again, never share it")
+                if not access.creator(db, eid):
+                    raise ValueError("this workspace has no maker now, and a private workspace is one login's alone: name a maker from its team first, or delete it")
+                lost = access.set_visibility(db, eid, "private", None, by=u["id"])
+        except ValueError as ex:
+            raise HTTPException(400, str(ex))
+        d = access.describe(db, None, eid)
+        return {"id": eid, "visibility": d["visibility"], "team": d["team"], "creator": d["creator"], "members": d["members"], "share_locked": d["share_locked"], **lost}
+
     @app.post("/api/auth/password")
     def auth_password(request: Request, response: Response, body: dict):
         u = getattr(request.state, "user", None)
@@ -395,7 +613,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise HTTPException(401, "sign in first")
         try:
             auth.change_password(db, u["id"], body.get("old", ""), body.get("new", ""))
-            _, token = auth.login(db, u["email"], body.get("new", ""))
+            token = auth.session_for(db, u["id"])          # not by signing in again: strangers' failures on the name must not answer 429 to a change that was made
+        except auth.TooManyAttempts as ex:
+            raise HTTPException(429, f"too many wrong passwords: try again in {max(1, ex.retry_after // 60)} minute{'s' if ex.retry_after >= 120 else ''}", headers={"retry-after": str(ex.retry_after)})
         except PermissionError as ex:
             raise HTTPException(403, str(ex))
         except ValueError as ex:
@@ -445,7 +665,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except Reparsing as ex:
             raise HTTPException(409, {"message": f"{ex}; the page asks again in a moment", "reparsing": True})
         except Exception as ex:
-            raise HTTPException(409, f"snapshot {sid} could not be read: {type(ex).__name__}: {ex}"[:400])
+            print(f"  snapshot {sid} could not be read: {type(ex).__name__}: {str(ex)[:500]}", flush=True)
+            raise HTTPException(409, "This upload's exports could not be read. Upload them again; whoever runs this instance can see why in its log.")
 
     def forget(eid: str) -> None:
         with cache_lock:
@@ -495,13 +716,15 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                     building.pop((eid, sid), None)
         return w
 
-    def _conv_head(c: dict) -> dict:
-        return {"id": c["id"], "title": c["title"], "created": c["created"], "updated": c["updated"], "turns": c["turns_count"], "cost_usd": c["cost_usd"],
+    def _conv_head(c: dict, names: dict | None = None) -> dict:
+        names = names if names is not None else _names([c.get("author_id")])
+        return {"author_id": c.get("author_id"), "author_name": names.get(c.get("author_id")), "id": c["id"], "title": c["title"], "created": c["created"], "updated": c["updated"], "turns": c["turns_count"], "cost_usd": c["cost_usd"],
                 "snapshot": c["snapshot_id"], "archived": c["archived"], "scope": c["scope"], "branched_from": c.get("branched_from"),
                 "branches": len(c.get("branches") or [])}
 
-    def summary(eid: str) -> dict:
+    def summary(eid: str, request: Request | None = None) -> dict:
         e = estate(eid)
+        me = getattr(request.state, "user", None) if request is not None else None
         models = reg.list_models(db, eid)
         act = snaps.active(eid)
         run = (act or {}).get("run") or {}
@@ -525,7 +748,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 d.update({"imports": a.get("imports"), "exports": a.get("exports"), "stale": a.get("stale_count"),
                           "effort_top10": f["effort_top10_share"], "agreement": f["referenced_by_check"]["agreement"]})
             out_models.append(d)
-        return {"id": eid, "name": e["name"], "created": e["created"], "archived": e["archived"], "models": out_models,
+        names = _names(c.get("author_id") for c in convs.list_conversations(db, eid, archived=False))
+        return {"id": eid, "name": e["name"], "created": e["created"], "archived": e["archived"], "models": out_models, "access": access.describe(db, me, eid),
                 "snapshot": ({k: act[k] for k in ("id", "label", "created", "activated_at", "note")} | {"files": len(act["files"]),
                              "run": {k: run.get(k) for k in ("id", "status", "started", "finished", "error")}}) if act else None,
                 "snapshots": snaps.list(eid),
@@ -534,7 +758,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 "duplicates": len(w.estate.duplicates) if w else 0, "questions": suggested(w) if w else [],
                 "statuses": len(w.statuses) if w else 0, "memories": len(w.memories) if w else 0, "notes": notesmod.count(db, eid),
                 "notes_flagged": notesmod.count_flagged(db, eid), "documents": docsmod.count(db, eid),
-                "conversations": [_conv_head(c) for c in reversed(convs.list_conversations(db, eid, archived=False))],
+                "conversations": [_conv_head(c, names) for c in reversed(convs.list_conversations(db, eid, archived=False))],
                 "tests": checksmod.rollup(checksmod.of(w)) if w else None,      # Home: the catalogue's totals and one line per area
                 "llm": bool(app.state.client_factory) or app.state.provider != "none",
                 "provider": "test" if app.state.client_factory else app.state.provider, "model": app.state.model_id}
@@ -585,9 +809,23 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except ValueError:
             return None
 
+    chat_locks: dict[str, threading.Lock] = {}
+
+    def _lock_of(cid: str) -> threading.Lock:
+        """One answer at a time in a chat. The lock belongs to the chat, not to the object in memory that answers it:
+        that object is dropped whenever the workspace changes under it (a document added, a model renamed), and a lock
+        that went with it let a second answer start in the same chat at once, and the turns be kept out of order
+        (security review 2026-11-24, third pass)."""
+        with cache_lock:
+            lk = chat_locks.get(cid)
+            if lk is None:
+                lk = chat_locks[cid] = threading.Lock()
+            return lk
+
     def _keep_session(cid: str, s: Session) -> None:
         """The live sessions, most recently used last. Once there are more than SESSIONS_MAX the oldest idle ones go (a
         session in the middle of an answer never does); an evicted conversation is rebuilt from the store on its next message."""
+        s.lock = _lock_of(cid)                   # the chat's own lock, not the session's: a session can be dropped and rebuilt while an answer runs
         with cache_lock:
             app.state.sessions.pop(cid, None)
             app.state.sessions[cid] = s
@@ -614,15 +852,37 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             raise SpendCapReached(f"this login has reached its spend cap, ${over['spent_usd']:.2f} used of ${over['cap_usd']:.2f}")
 
     def _spent(uid: str | None, u: dict, kind: str = "answer") -> None:
+        """One model call onto the login's ledger. The store can be busy for a moment: the write is tried again, and if
+        it still cannot be made the error goes up to stop the turn. A call is never counted as free."""
         from .chat import cost_usd, metered_usd
-        auth.record_spend(db, uid, metered_usd(u, app.state.model_id), cost_usd(u, app.state.model_id), kind=kind, model=app.state.model_id,
-                          tokens_in=u.get("input", 0) + u.get("cache_read", 0) + u.get("cache_write", 0), tokens_out=u.get("output", 0))
+        for attempt in range(4):
+            try:
+                auth.record_spend(db, uid, metered_usd(u, app.state.model_id), cost_usd(u, app.state.model_id, flat), kind=kind,
+                                  model=app.state.model_id, tokens_in=u.get("input", 0) + u.get("cache_read", 0) + u.get("cache_write", 0), tokens_out=u.get("output", 0))
+                return
+            except sqlite3.OperationalError:
+                if attempt == 3:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
 
     def _meter(s: Session, uid: str | None) -> None:
         """Every model call of a session is checked against the login's cap before it is made and put on the login's
         ledger when it returns."""
         s.spend_gate = lambda: _spend_gate(uid)
         s.on_spend = lambda u: _spent(uid, u)
+
+    def _asker(s: Session, uid: str | None) -> dict:
+        """Who is asking this one question, handed to the session with the question by the request that holds its lock:
+        their name on the turn, their cap and ledger, their tracing level and editing choice as they are now, and a check
+        made before every model call that they are still in the workspace."""
+        eid = s.w.estate_id
+
+        def allowed():
+            if uid and not access.is_member(db, {"id": uid}, eid):
+                from .chat import Withdrawn
+                raise Withdrawn("no longer in this workspace")
+        return {"user": uid, "spend_gate": lambda: _spend_gate(uid), "on_spend": lambda u: _spent(uid, u), "allowed": allowed,
+                "trace_level": _trace_level_of(uid), "edit_pass": _prefs_of(uid).get("edit_pass") is not False}
 
     def new_session(eid: str, title: str, user: str | None = None, scope: dict | None = None) -> str:
         w = workspace(eid)
@@ -635,9 +895,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         snapshot the estate no longer reads is not answered until the owner has chosen: continue on the held
         snapshot (then it is rebuilt over that snapshot) or re-evaluate as a branch. Never silently mixed."""
         s = app.state.sessions.get(cid)
-        if s is not None:
-            s.user = user or s.user
-            _meter(s, user)                      # the login asking now: its cap, its ledger, whoever opened the chat
+        if s is not None:                        # found, and left as it is: who is asking goes in with the question, under the lock (_asker)
             _keep_session(cid, s)
             return s
         try:
@@ -734,6 +992,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     if (static / "app" / "assets").is_dir():
         from fastapi.staticfiles import StaticFiles
         app.mount("/app/assets", StaticFiles(directory=str(static / "app" / "assets")), name="app-assets")
+    from fastapi.staticfiles import StaticFiles as _SF          # the getting-started guide's screens: Caldergate demo captures, nothing of anyone's
+    app.mount("/app/guide/img", _SF(directory=str(static / "guide" / "img"), check_dir=False), name="guide-img")     # mounted even before tools/guide.py has written them
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -749,35 +1009,60 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     # ---------- estates ----------
     @app.get("/health")
-    def health():
-        return {"status": "ok", "estates": len(reg.list_estates(db, ws_id, include_archived=True)), "provider": app.state.provider,
-                "tracing": app.state.tracer.enabled}
+    def health(request: Request):
+        out = {"status": "ok"}
+        u = getattr(request.state, "user", None)
+        if u is not None or (auth.no_accounts(db) and loopback):      # which model route and whether tracing is on: not for a passer-by
+            out |= {"provider": app.state.provider, "tracing": app.state.tracer.enabled}
+        if (u is not None and u.get("role") == "owner") or (auth.no_accounts(db) and loopback):      # how many workspaces the whole instance holds: the admin's
+            out["estates"] = len(reg.list_estates(db, ws_id, include_archived=True))
+        return out
 
     @app.get("/api/estates")
     def list_estates(request: Request, archived: bool = False):
         out = []
         for e in access.visible(db, getattr(request.state, "user", None), reg.list_estates(db, ws_id, include_archived=archived)):
             act = db.one("SELECT id, label, activated_at FROM snapshots WHERE estate_id=? AND status='active'", e["id"])
-            out.append({"id": e["id"], "name": e["name"], "created": e["created"], "archived": e["archived"],
+            d = access.describe(db, getattr(request.state, "user", None), e["id"])
+            out.append({"id": e["id"], "name": e["name"], "created": e["created"], "archived": e["archived"], "visibility": d["visibility"], "team": d["team"], "mine": d["mine"],
+                        "created_by_name": d["creator"],
                         "models": [m["name"] for m in reg.list_models(db, e["id"], include_retired=False)], "snapshot": act, **_holds(e["id"])})
         return out
 
+    def _wanted_visibility(request: Request, raw: str | None) -> tuple[str, str | None]:
+        """Private unless the maker asks for Shared and is in a team: (visibility, team id). Asked for with no team, it is refused
+        before anything is made."""
+        vis = (raw or "private").strip().lower() or "private"
+        if vis not in access.VISIBILITY:
+            raise HTTPException(400, "visibility is private or shared")
+        if vis == "private":
+            return "private", None
+        t = access.team_of(db, who(request))
+        if not t:
+            raise HTTPException(400, "a workspace is shared with a team, and this login is in no team: make it private, or ask the admin to put you in a team")
+        return "shared", t["id"]
+
     @app.post("/api/estates")
     def create_estate_with_files(request: Request, name: str = Form(""), model_names: list[str] = Form(...), line_items: list[UploadFile] = File(...),
-                                       actions: list[UploadFile] = File(default=[]), modules: list[UploadFile] = File(default=[]), aliases: str = Form("")):
+                                       actions: list[UploadFile] = File(default=[]), modules: list[UploadFile] = File(default=[]), aliases: str = Form(""),
+                                       visibility: str = Form("private")):
         """One request: register the models, stage their files, parse, activate. A bad export leaves nothing behind.
         A plain function, on a worker thread: reading exports takes seconds and nobody else may wait for it."""
         if len(model_names) != len(line_items):
             raise HTTPException(400, "one Line Items file per model name")
-        with _export_slot():
-            return _create_estate(request, name, model_names, line_items, actions, modules, aliases)
+        share = _wanted_visibility(request, visibility)
+        _room(who(request), sum((f.size or 0) for f in [*line_items, *actions, *modules] if f))
+        with _export_slot(who(request)):
+            return _create_estate(request, name, model_names, line_items, actions, modules, aliases, share)
 
-    def _create_estate(request: Request, name: str, model_names: list[str], line_items: list, actions: list, modules: list, aliases: str):
+    def _create_estate(request: Request, name: str, model_names: list[str], line_items: list, actions: list, modules: list, aliases: str, share=("private", None)):
         al = _aliases(aliases)
         by = who(request)
         e = reg.create_estate(db, ws_id, name.strip() or f"Estate of {len(model_names)}", created_by=by)
         if by:
             access.add_member(db, e["id"], by)
+        if share[0] == "shared":
+            access.set_visibility(db, e["id"], "shared", share[1], by=by)
         try:
             snap = snaps.create(e["id"], label="first upload", inherit=False, created_by=by)
             for i, (mn, li) in enumerate(zip(model_names, line_items)):
@@ -799,25 +1084,42 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except (ValueError, KeyError, HTTPException) as ex:
             _discard_estate(e["id"])
             raise HTTPException(400, f"could not read the exports: {getattr(ex, 'detail', ex)}")
-        return summary(e["id"])
+        return summary(e["id"], request)
 
     @app.post("/api/estates/create")
     def create_estate_json(request: Request, body: dict | None = None):
         body = body or {}
+        share = _wanted_visibility(request, body.get("visibility"))
         e = reg.create_estate(db, ws_id, (body.get("name") or "").strip(), created_by=who(request))
         if who(request):
             access.add_member(db, e["id"], who(request))
-        return summary(e["id"])
+        if share[0] == "shared":
+            access.set_visibility(db, e["id"], "shared", share[1], by=who(request))
+        return summary(e["id"], request)
 
     @app.get("/api/estates/{eid}")
-    def get_estate(eid: str):
-        return summary(eid)
+    def get_estate(request: Request, eid: str):
+        return summary(eid, request)
 
     @app.patch("/api/estates/{eid}")
-    def patch_estate(eid: str, body: dict):
+    def patch_estate(request: Request, eid: str, body: dict):
         estate(eid)
-        reg.update_estate(db, eid, name=body.get("name"), archived=body.get("archived"))
-        return summary(eid)
+        if "visibility" in body:                      # Private or Shared with the maker's team: the maker's to change (the admin has the admin panel)
+            u = getattr(request.state, "user", None)
+            if not u:
+                raise HTTPException(400, "there are no logins on this server, so there is nobody to share a workspace with")
+            if access.creator(db, eid) != u["id"]:
+                maker = access.describe(db, u, eid)["creator"]
+                raise HTTPException(403, f"only {maker or 'the login that made this workspace'}, who made it, or the admin can change who it is shared with")
+            t = access.team_of(db, u["id"])
+            try:
+                access.set_visibility(db, eid, body.get("visibility"), t["id"] if t else None, by=u["id"])
+            except ValueError as ex:
+                raise HTTPException(400, str(ex))
+        if "name" in body or "archived" in body:
+            _maker_only(request, eid, "rename or archive it")
+            reg.update_estate(db, eid, name=body.get("name"), archived=body.get("archived"))
+        return summary(eid, request)
 
     def _holds(eid: str) -> dict:
         """What a workspace holds, as counts: what a delete takes with it."""
@@ -831,16 +1133,23 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         owner(request)
         out = []
         for e in reg.list_estates(db, ws_id, include_archived=True):
-            out.append({"id": e["id"], "name": e["name"], "created": e["created"], "archived": e["archived"],
+            d = access.describe(db, None, e["id"])
+            out.append({"id": e["id"], "name": e["name"], "created": e["created"], "archived": e["archived"], "visibility": d["visibility"], "team": d["team"], "creator": d["creator"],
+                        "share_locked": d["share_locked"],
                         "members": [r["email"] for r in db.q("SELECT u.email FROM estate_members m JOIN users u ON u.id=m.user_id WHERE m.estate_id=? ORDER BY u.email", e["id"])],
                         "models": len(reg.list_models(db, e["id"], include_retired=False)), **_holds(e["id"])})
         return {"workspaces": out}
 
     @app.delete("/api/estates/{eid}")
-    def delete_estate(eid: str, body: dict | None = None):
+    def delete_estate(request: Request, eid: str, body: dict | None = None):
         """Removes the estate: register, snapshots, runs, the materialised folders and the .architect workspace
-        with its transcripts. The caller must send the estate's name back to confirm. Blobs are left for gc."""
+        with its transcripts. The caller must send the estate's name back to confirm. Blobs are left for gc.
+        A team-mate uses a shared workspace; only its maker or the admin deletes it."""
         e = estate(eid)
+        u = getattr(request.state, "user", None)
+        if u and u.get("role") != "owner" and access.creator(db, eid) != u["id"]:
+            maker = access.describe(db, u, eid)["creator"]
+            raise HTTPException(403, f"only {maker or 'the login that made this workspace'}, who made it, or the admin can delete it")
         if not body or (body.get("confirm") or "").strip() != e["name"]:
             raise HTTPException(400, "type the workspace's exact name to delete it")
         _discard_estate(eid)
@@ -863,6 +1172,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         from fastapi.responses import FileResponse
         from starlette.background import BackgroundTask
         e = estate(eid)
+        _maker_only(request, eid, "take a backup of it")
         td = tempfile.mkdtemp(prefix="architect-backup-")
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
         fname = f"{(reg.safe_name(e['name']) or 'estate').replace(' ', '_')}-{eid}-{stamp}.architect.zip"
@@ -871,43 +1181,58 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     @app.post("/api/estates/restore/inspect")
     def inspect_backup(request: Request, file: UploadFile = File(...)):
-        """What a backup holds, before it is restored: name, models, counts, when it was taken, and whether its id is already here."""
-        with tempfile.TemporaryDirectory() as td:
+        """What a backup holds, before it is restored: a bounded summary (name, models, counts, when it was taken).
+        Nothing about this store. Opening an archive is work, so it takes the same slot a restore does: one at a time
+        per login."""
+        with _export_slot(who(request), "restore"), tempfile.TemporaryDirectory() as td:
             p = Path(td) / "backup.zip"
             _save_upload(file, p)
             try:
                 m = backupmod.inspect_archive(p)
             except ValueError as ex:
                 raise HTTPException(400, str(ex))
-        have = reg.get_estate(db, m["estate_id"])
-        # an id already here: named only to a login that is in that workspace (or on a store with no logins)
-        u = getattr(request.state, "user", None)
-        mine = have and (auth.no_accounts(db) or access.is_member(db, u, have["id"]))
-        m["conflict"] = ({"id": have["id"], "name": have["name"]} if mine else {"id": have["id"]}) if have else None
+        m["conflict"] = None
         return m
 
     @app.post("/api/estates/restore")
     def restore_backup(request: Request, file: UploadFile = File(...), name: str = Form("")):
-        """Restore a backup under its original ids, so every old citation still opens. Refuses an estate already in the store."""
-        with tempfile.TemporaryDirectory() as td:
+        """Restore a backup as a new workspace of the restorer's. Every id in it is made again by this server, so
+        nothing in an archive can be "already here": a backup restores beside the workspace it was taken from."""
+        _room(who(request))
+        with _export_slot(who(request), "restore"), tempfile.TemporaryDirectory() as td:      # one restore at a time on the instance, and one per login
             p = Path(td) / "backup.zip"
             _save_upload(file, p)
             try:
+                _room(who(request), backupmod.inspect_archive(p).get("blob_bytes") or 0)      # what it would add to this login's files, by what the zip declares
                 with blobs.lock:                      # its files and the rows that refer to them go in together (see BlobStore)
-                    r = backupmod.import_estate(db, blobs, data, p, ws_id, by=who(request), name=name)
+                    try:
+                        r = backupmod.import_estate(db, blobs, data, p, ws_id, by=who(request), name=name)
+                    except BaseException:
+                        blobs.gc()                    # a refused archive leaves none of its files on the volume
+                        raise
             except ValueError as ex:
-                raise HTTPException(409 if "already in this store" in str(ex) else 400, str(ex))
+                raise HTTPException(400, str(ex))
         if who(request):
             access.add_member(db, r["id"], who(request))
+        pending = False
         if r.get("active_snapshot"):                  # the archive carries no parse cache: read the exports now, so the page opens on a whole estate
             try:
-                with _export_slot():
+                with _export_slot(who(request)):
                     snaps.estate_run(r["active_snapshot"], block=True)
-            except HTTPException:
-                raise HTTPException(429, "Restored. The instance is reading other people's exports right now, so this workspace's are not read yet: open it in a minute.", headers={"retry-after": "30"})
-            except Exception as ex:
-                raise HTTPException(409, f"restored, but its exports could not be read: {type(ex).__name__}: {ex}"[:400])
-        return summary(r["id"]) | {"restore": r}
+            except (HTTPException, Reparsing):        # no slot free, or a re-read under way: it is restored, and is read when it is opened
+                pending = True
+            except Exception as ex:                   # exports that cannot be read are not a workspace: nothing of it is kept
+                print(f"  restore of {r['id']} dropped, exports unreadable: {type(ex).__name__}: {str(ex)[:500]}", flush=True)
+                _discard_estate(r["id"])
+                with blobs.lock:
+                    blobs.gc()
+                raise HTTPException(400, "The backup's exports could not be read, so nothing of it was kept.")
+        try:
+            return summary(r["id"], request) | {"restore": r, "pending": pending}
+        except HTTPException as ex:
+            if ex.status_code != 409:
+                raise
+            return {"id": r["id"], "name": r["name"], "restore": r, "pending": True}       # restored; its exports are still being read
 
     @app.get("/api/estates/{eid}/report")
     def get_report(eid: str):
@@ -916,11 +1241,12 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         w = workspace(eid)
         theme = Path(__file__).parent / "static" / "report-theme-dark.css"
         css = theme.read_text(encoding="utf-8") if theme.exists() else None
-        # One self-contained page with its own inline script and styles: it gets a policy of its own, which lets those
-        # run and lets the page reach nothing at all (no connect, no image but data:, no frame), the app included.
-        return HTMLResponse(md_to_html(render_markdown(w.estate), "Estate report", css=css, brand="ANAPLAN ESTATE REPORT"),
-                            headers={"content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
-                                                                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"})
+        # One self-contained page, written from names in the exports. It is read tag by tag first (reportpage.safe: no
+        # event handler, no link out, no style that covers the page), and served under a policy of its own: the
+        # library's one script by its hash, no other script, no origin (sandbox), and nothing it can reach, the app included.
+        from . import reportpage
+        page, _ = reportpage.safe(md_to_html(reportpage.plain_links(render_markdown(w.estate)), "Estate report", css=css, brand="ANAPLAN ESTATE REPORT"))
+        return HTMLResponse(page, headers={"content-security-policy": reportpage.policy()})
 
     @app.get("/api/estates/{eid}/state")
     def get_state(eid: str):
@@ -950,10 +1276,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return m
 
     @app.patch("/api/models/{mid}")
-    def patch_model(mid: str, body: dict):
+    def patch_model(request: Request, mid: str, body: dict):
         m = reg.get_model(db, mid)
         if not m:
             raise HTTPException(404, "no such model")
+        _maker_only(request, m["estate_id"], "rename or retire its models")
         try:
             out = reg.update_model(db, mid, name=body.get("name"), purpose=body.get("purpose"), owner=body.get("owner"),
                                    aliases=_alias_list(body["aliases"]) if "aliases" in body else None, retired=body.get("retired"))
@@ -981,7 +1308,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                               modules: list[UploadFile] = File(default=[]), zip: UploadFile | None = File(default=None)):
         """A draft snapshot: the active snapshot's files (unless fresh) plus whatever is uploaded here."""
         estate(eid)
-        with _export_slot():                         # the files pass through memory on their way in: a few uploads at a time
+        _room(who(request), sum((f.size or 0) for f in [*line_items, *actions, *modules, zip] if f))
+        with _export_slot(who(request)):             # the files pass through memory on their way in: a few uploads at a time
             snap = snaps.create(eid, label=label, note=note, inherit=not fresh, created_by=who(request))
             _stage_rows(snap["id"], eid, model_ids, model_names, line_items, actions, modules, zip)
         return snapshot(snap["id"])
@@ -993,17 +1321,18 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return s
 
     @app.post("/api/snapshots/{sid}/files")
-    def add_files(sid: str, model_ids: list[str] = Form(default=[]), model_names: list[str] = Form(default=[]),
+    def add_files(request: Request, sid: str, model_ids: list[str] = Form(default=[]), model_names: list[str] = Form(default=[]),
                         line_items: list[UploadFile] = File(default=[]), actions: list[UploadFile] = File(default=[]),
                         modules: list[UploadFile] = File(default=[]), zip: UploadFile | None = File(default=None)):
         s = snapshot(sid)
-        with _export_slot():
+        _room(who(request), sum((f.size or 0) for f in [*line_items, *actions, *modules, zip] if f))
+        with _export_slot(who(request)):
             _stage_rows(sid, s["estate_id"], model_ids, model_names, line_items, actions, modules, zip)
         return snapshot(sid)
 
     @app.delete("/api/snapshots/{sid}/files/{mid}")
-    def remove_files(sid: str, mid: str, kind: str | None = None):
-        snapshot(sid)
+    def remove_files(request: Request, sid: str, mid: str, kind: str | None = None):
+        _theirs(request, snapshot(sid)["estate_id"], snapshot(sid).get("created_by"), "take files out of this upload")
         try:
             snaps.unstage(sid, mid, kind)
         except ValueError as ex:
@@ -1012,7 +1341,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     @app.post("/api/snapshots/{sid}/process")
     def process_snapshot(request: Request, sid: str):
-        snapshot(sid)
+        _theirs(request, snapshot(sid)["estate_id"], snapshot(sid).get("created_by"), "read this upload")
         try:
             run = jobs.submit(sid, by=who(request))
         except ValueError as ex:
@@ -1020,8 +1349,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         return {"run": run, "snapshot": snapshot(sid)}
 
     @app.post("/api/snapshots/{sid}/cancel")
-    def cancel_snapshot(sid: str):
-        snapshot(sid)
+    def cancel_snapshot(request: Request, sid: str):
+        _theirs(request, snapshot(sid)["estate_id"], snapshot(sid).get("created_by"), "stop this upload being read")
         return {"cancelled": jobs.cancel(sid)}
 
     @app.post("/api/snapshots/{sid}/activate")
@@ -1040,13 +1369,13 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except HTTPException:
             pass
         forget_state(eid)                # flagged notes carry their flag into the material
-        return summary(eid) | {"review": review}
+        return summary(eid, request) | {"review": review}
 
     @app.delete("/api/snapshots/{sid}")
     def delete_snapshot(request: Request, sid: str):
         """A draft, processed or failed snapshot goes at once; a superseded one only when nothing points at it (the
         response says what does). The active snapshot never goes. Its blobs go with it when nothing else holds them."""
-        snapshot(sid)
+        _theirs(request, snapshot(sid)["estate_id"], snapshot(sid).get("created_by"), "delete this upload")
         try:
             out = snaps.delete(sid, by=who(request))
         except ValueError as ex:
@@ -1058,7 +1387,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     @app.get("/api/estates/{eid}/conversations")
     def list_conversations(eid: str, q: str | None = None, archived: bool | None = False):
         estate(eid)
-        return [_conv_head(c) for c in convs.list_conversations(db, eid, q=q, archived=archived)]
+        rows = convs.list_conversations(db, eid, q=q, archived=archived)
+        names = _names(c.get("author_id") for c in rows)
+        return [_conv_head(c, names) for c in rows]
 
     @app.post("/api/estates/{eid}/conversations")
     def start_conversation(request: Request, eid: str, body: dict | None = None):
@@ -1078,7 +1409,12 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             c = convs.get(db, cid)
         except KeyError:
             raise HTTPException(404, "no such conversation")
+        names = _names([c.get("author_id")] + [t.get("by") for t in c["turns"]])
+        for t in c["turns"]:                              # who asked: in a shared workspace a chat has more than one voice
+            t["by_name"] = names.get(t.get("by"))
+            t.pop("trace_level", None)                    # what the asker let the tracer have is theirs to see in Settings, not a team-mate's
         return {"id": c["id"], "estate": c["estate_id"], "title": c["title"], "turns": c["turns"], "cost_usd": c["cost_usd"], "model": app.state.model_id,
+                "author_name": names.get(c.get("author_id")),
                 "snapshot": c["snapshot_id"], "scope": c["scope"], "archived": c["archived"], "created": c["created"], "updated": c["updated"],
                 "branched_from": c.get("branched_from"), "origin": c.get("origin"), "branches": c.get("branches") or [],
                 "stale": convs.stale(db, c, active_sid(c["estate_id"]))}
@@ -1093,6 +1429,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             c = convs.get(db, cid, with_turns=False)
         except KeyError:
             raise HTTPException(404, "no such conversation")
+        if any(k in body for k in ("title", "archived", "scope")):
+            _theirs(request, c["estate_id"], c.get("author_id"), "rename, archive or re-scope this chat")
         if body.get("continue_on_snapshot"):
             # the owner's choice for a stale conversation: keep answering on the snapshot it is held on. If the store no
             # longer has that snapshot there is nothing to continue on: it is re-bound to the active one, and the audit says so.
@@ -1160,6 +1498,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def delete_conversation(request: Request, cid: str):
         """Removes the conversation from the store. Its JSONL export moves to .architect/transcripts/deleted/
         rather than being erased, so a wrong click costs nothing; nothing lists or loads that folder."""
+        try:
+            was = convs.get(db, cid, with_turns=False)
+        except KeyError:
+            raise HTTPException(404, "no such conversation")
+        _theirs(request, was["estate_id"], was.get("author_id"), "delete this chat")
         app.state.sessions.pop(cid, None)
         c = convs.delete(db, cid, by=who(request))
         if not c:
@@ -1176,7 +1519,11 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def list_notes(eid: str, q: str | None = None, type: str | None = None, status: str | None = None, model_id: str | None = None,
                    module: str | None = None, superseded: bool = False, flagged: bool = False):
         estate(eid)
-        return notesmod.list_notes(db, eid, q=q, type=type, status=status, model_id=model_id, module=module, include_superseded=superseded, flagged=flagged)
+        rows = notesmod.list_notes(db, eid, q=q, type=type, status=status, model_id=model_id, module=module, include_superseded=superseded, flagged=flagged)
+        names = _names(n.get("author_id") for n in rows)
+        for n in rows:
+            n["author_name"] = names.get(n.get("author_id"))
+        return rows
 
     def _cite_scopes(eid: str, nid: str) -> int:
         """A note scoped to a model, a module or a line item carries that object's citation on the active snapshot, so the
@@ -1273,6 +1620,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def patch_note(request: Request, nid: str, body: dict):
         try:
             before = notesmod.get(db, nid)
+            _theirs(request, before["estate_id"], before.get("author_id"), "change this note")
             n = notesmod.update(db, nid, title=body.get("title"), body=body.get("body"), type=body.get("type"), status=body.get("status"),
                                 objects=body.get("objects") if "objects" in body else None, by=who(request), reviewed_on=active_sid(before["estate_id"]))
         except KeyError:
@@ -1290,6 +1638,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         """The owner has looked at what moved under a flagged note and keeps it: the flag clears and the snapshot reviewed
         against becomes the baseline for the next activation."""
         try:
+            before = notesmod.get(db, nid)
+            _theirs(request, before["estate_id"], before.get("author_id"), "clear this note's review flag")
             n = notesmod.mark_reviewed(db, nid, by=who(request))
         except KeyError:
             raise HTTPException(404, "no such note")
@@ -1299,6 +1649,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     @app.post("/api/notes/{nid}/supersede")
     def supersede_note(request: Request, nid: str, body: dict | None = None):
         try:
+            before = notesmod.get(db, nid)
+            _theirs(request, before["estate_id"], before.get("author_id"), "retire this note")
             n = notesmod.supersede(db, nid, by_note=(body or {}).get("by_note"), by=who(request))
         except KeyError:
             raise HTTPException(404, "no such note")
@@ -1311,6 +1663,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def delete_note(request: Request, nid: str):
         try:
             n = notesmod.get(db, nid)
+            _theirs(request, n["estate_id"], n.get("author_id"), "delete this note")
             notesmod.delete(db, nid, by=who(request))
         except KeyError:
             raise HTTPException(404, "no such note")
@@ -1320,15 +1673,17 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def forget_state(eid: str) -> None:
         """Notes or finding state changed: every workspace over this estate re-reads them, and the material every live
         session caches follows the workspace version."""
-        for k, w in app.state.workspaces.items():
-            if k[0] == eid:
-                w.reload()
+        with cache_lock:                              # the dictionary is everyone's: read under its lock, worked on outside it
+            hit = [w for k, w in app.state.workspaces.items() if k[0] == eid]
+        for w in hit:
+            w.reload()
 
     def forget_handles(eid: str) -> None:
         """A proposal came or went: the decision handles the validator knows are recomputed on the next answer."""
-        for k, w in app.state.workspaces.items():
-            if k[0] == eid:
-                w.__dict__.pop("_handles", None)
+        with cache_lock:
+            hit = [w for k, w in app.state.workspaces.items() if k[0] == eid]
+        for w in hit:
+            w.__dict__.pop("_handles", None)
 
     # ---------- finding state ----------
     @app.get("/api/estates/{eid}/findings")
@@ -1384,7 +1739,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except ValueError:
             p = {}
         out = {"answer_mode": p.get("answer_mode") if p.get("answer_mode") in ("full", "concise") else "full",
-               "edit_pass": p.get("edit_pass") is not False}      # a long answer is cut by an editing pass unless this login turned that off
+               "edit_pass": p.get("edit_pass") is not False,      # a long answer is cut by an editing pass unless this login turned that off
+               "guide_seen": p.get("guide_seen") is True}         # the getting-started guide is offered once, until this login opens or dismisses it
         if p.get("trace_level") in TRACE_LEVELS:          # only when this login chose one: with the time it did
             out |= {"trace_level": p["trace_level"], "trace_level_at": p.get("trace_level_at")}
         return out
@@ -1407,7 +1763,10 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         ceiling = getattr(t, "ceiling", "content")
         p = _prefs_of(user["id"] if user else None)
         chosen = p.get("trace_level") if p.get("trace_level") in TRACE_LEVELS else None
-        default = "off" if not t.enabled else ("content" if (user is None or user.get("role") == "owner") else "off")
+        first = db.one("SELECT id FROM users ORDER BY rowid LIMIT 1")
+        # with content by default: nobody signed in on a machine of its own, and the one login the instance was set up
+        # with (who also set the key). A login made an admin later did not choose that: it sends nothing until it does.
+        default = "off" if not t.enabled else ("content" if (user is None or (user.get("role") == "owner" and first and first["id"] == user["id"])) else "off")
         level = chosen or default
         if not t.enabled:
             level = "off"
@@ -1426,6 +1785,13 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
     def get_prefs(request: Request):
         return _prefs(request)
 
+    @app.get("/api/guide")
+    def get_guide():
+        """The getting-started guide, for whoever is signed in: the sections in the order a new person meets them, each
+        screen with where its callouts point, and the questions to ask first."""
+        from . import guide as guidemod
+        return guidemod.for_app()
+
     @app.put("/api/prefs")
     def put_prefs(request: Request, body: dict):
         p = _prefs(request)
@@ -1433,6 +1799,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             p["answer_mode"] = body["answer_mode"]
         if isinstance(body.get("edit_pass"), bool):
             p["edit_pass"] = body["edit_pass"]
+        if isinstance(body.get("guide_seen"), bool):
+            p["guide_seen"] = body["guide_seen"]
         if "trace_level" in body:                         # a login's own choice, for its own turns only: there is no way to name another login here
             if body["trace_level"] not in TRACE_LEVELS:
                 raise HTTPException(400, f"trace_level must be one of {', '.join(TRACE_LEVELS)}")
@@ -1448,10 +1816,57 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     BUSY = "the architect is still answering in this conversation; wait for that answer before asking again"
 
+    class _Closing(StreamingResponse):
+        """A streaming response that closes what it was streaming when it ends, however it ends. When the reader has
+        gone the server stops sending, and the generator behind the stream would otherwise be left where it stood until
+        the garbage collector found it."""
+        async def __call__(self, scope, receive, send):
+            import anyio
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                aclose = getattr(self.body_iterator, "aclose", None)
+                if aclose is not None:
+                    with anyio.CancelScope(shield=True):
+                        await aclose()
+
+    async def _until_gone(it):
+        """A stream of events from a plain generator, closed by name when the reader goes away. Left to itself the
+        generator is only closed when the garbage collector finds it, and until then the chat's lock and the login's
+        answer slot stay taken (security review 2026-11-24, M1). Here every step runs on a worker thread under a lock of
+        its own; when the response is cancelled or dropped, `close` waits for the step under way to come back and then
+        closes the generator, whose own `finally` gives the lock and the slot back and records what was spent."""
+        import anyio
+        step, END = threading.Lock(), object()
+
+        def one():
+            with step:
+                try:
+                    return next(it)
+                except StopIteration:
+                    return END
+
+        def close():
+            with step:
+                it.close()
+        try:
+            while True:
+                ev = await run_in_threadpool(one)
+                if ev is END:
+                    break
+                yield ev
+        finally:
+            with anyio.CancelScope(shield=True):
+                await run_in_threadpool(close)
+
     def _question(text: str) -> None:
         """A question is a question: not empty, and not long enough to be a way of spending someone's budget in one go."""
-        if not (text or "").strip():
+        if not isinstance(text, str) or not text.strip():
             raise HTTPException(400, "empty message")
+        try:
+            text.encode("utf-8")
+        except UnicodeError:
+            raise HTTPException(400, "that question holds characters that are not text")
         if len(text) > MAX_QUESTION_CHARS:
             raise HTTPException(400, f"a question may be up to {MAX_QUESTION_CHARS:,} characters; this one is {len(text):,}. Put long material in a document and ask about it")
 
@@ -1463,25 +1878,29 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                                                  "the login to raise it.", "cap": over})
 
     def _turn(cid: str, text: str, user: str | None = None, mode: str = "full") -> dict:
-        sess = session_of(cid, user)
-        if not sess.lock.acquire(blocking=False):
+        from .chat import Withdrawn, SpendNotRecorded
+        lock = _lock_of(cid)
+        if not lock.acquire(blocking=False):              # the lock first: a request that has to wait changes nothing about the answer under way
             raise HTTPException(409, BUSY)
         try:
+            sess = session_of(cid, user)                  # found or rebuilt under the lock: it has every turn that was kept before this one
             _enter_chat(user)
-        except HTTPException:
-            sess.lock.release()
+        except BaseException:
+            lock.release()
             raise
         try:
-            sess.trace_level = _trace_level_of(user)      # read now, for this turn: a change in Settings applies from the next question
-            sess.edit_pass = _prefs_of(user).get("edit_pass") is not False
-            sess.ask(text, mode)
+            sess.ask(text, mode, **_asker(sess, user))    # read now, for this turn: a change in Settings applies from the next question
         except HTTPException:
             raise
+        except Withdrawn:
+            raise HTTPException(404, NOTHING)
+        except SpendNotRecorded:
+            raise HTTPException(503, NOT_COUNTED, headers={"retry-after": "15"})
         except Exception as e:
             raise HTTPException(*model_error(e))
         finally:
             _leave_chat(user)
-            sess.lock.release()
+            lock.release()
         return sess.turns[-1]
 
     @app.post("/api/conversations/{cid}/stream")
@@ -1490,34 +1909,41 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         text = (body.get("text") or "").strip()
         _question(text)
         _cap(request)
-        sess = session_of(cid, who(request))
         mode = _mode(request, body)
-        if not sess.lock.acquire(blocking=False):
-            raise HTTPException(409, BUSY)
         uid = who(request)
+        lock = _lock_of(cid)
+        if not lock.acquire(blocking=False):
+            raise HTTPException(409, BUSY)
         try:
+            sess = session_of(cid, uid)
             _enter_chat(uid)
-        except HTTPException:
-            sess.lock.release()
+        except BaseException:
+            lock.release()
             raise
-
-        level = _trace_level_of(uid)
-        tighten = _prefs_of(uid).get("edit_pass") is not False
+        try:
+            asker = _asker(sess, uid)
+        except BaseException:
+            _leave_chat(uid)
+            lock.release()
+            raise
+        from .chat import Withdrawn, SpendNotRecorded
 
         def gen():
             try:
-                sess.trace_level = level
-                sess.edit_pass = tighten
-                for ev in sess.ask_stream(text, mode):
+                for ev in sess.ask_stream(text, mode, **asker):
                     if ev["type"] == "tool" and ev.get("args") is None:
                         continue                      # the start event; the full one follows with args
                     yield "data: " + json.dumps(ev, ensure_ascii=False, default=str) + "\n\n"
+            except Withdrawn:
+                yield "data: " + json.dumps({"type": "error", "message": NOTHING}) + "\n\n"
+            except SpendNotRecorded:
+                yield "data: " + json.dumps({"type": "error", "message": NOT_COUNTED}) + "\n\n"
             except Exception as e:
                 yield "data: " + json.dumps({"type": "error", "message": model_error(e)[1]}) + "\n\n"
             finally:
                 _leave_chat(uid)
-                sess.lock.release()                   # whichever thread finishes the stream, or closes it early
-        return StreamingResponse(gen(), media_type="text/event-stream", headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
+                lock.release()                        # whichever thread finishes the stream, or closes it early
+        return _Closing(_until_gone(gen()), media_type="text/event-stream", headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
 
 
     # ---------- the demo state (v0.2 P4) ----------
@@ -1670,15 +2096,23 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                         r = client.messages.create(**call)
                     u = _usage_of(r)
                     out_text = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", "") == "text").strip()
-                    g.update(output=out_text, usage=u, cost_usd=cost_usd(u, app.state.model_id) if u else None)
+                    g.update(output=out_text, usage=u, cost_usd=cost_usd(u, app.state.model_id, flat) if u else None)
                 tr.output(out_text)
             if u:
-                _spent(uid, u, kind="summary")
+                try:
+                    _spent(uid, u, kind="summary")
+                except sqlite3.OperationalError as e:     # not counted, so not used: the opening sentences stand in, and the upload says why
+                    from .chat import SpendNotRecorded
+                    raise SpendNotRecorded(str(e)) from e
             return out_text
         return summarise
 
     def _docs_payload(eid: str) -> dict:
-        return {"documents": docsmod.list_documents(db, eid), "totals": docsmod.totals(db, eid),
+        docs = docsmod.list_documents(db, eid)
+        names = _names(d.get("uploaded_by") for d in docs)
+        for d in docs:
+            d["uploaded_by_name"] = names.get(d.get("uploaded_by"))
+        return {"documents": docs, "totals": docsmod.totals(db, eid),
                 "limits": {"documents": docsmod.MAX_DOCS, "bytes": docsmod.MAX_BYTES,
                            "note": f"Up to {docsmod.MAX_DOCS} project documents, {docsmod.MAX_BYTES // (1024 * 1024)} MB each: project documents, not an archive. "
                                    "PDF, Word (.docx), Markdown, text, CSV or a script. A scanned PDF is not read: there is no OCR."}}
@@ -1695,24 +2129,33 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         A plain function on purpose: reading a PDF and having the model write the card's summary take seconds, and a
         plain route runs in a worker thread, so other requests are answered meanwhile."""
         estate(eid)
+        if replaces:
+            old = db.one("SELECT uploaded_by FROM documents WHERE id=? AND estate_id=?", replaces, eid)
+            if old:
+                _theirs(request, eid, old["uploaded_by"], "replace this document")
         act = active_sid(eid)
         er = run_of(act) if act else None
         summarise = _summariser(who(request))
         out = []
-        for up in files:
-            if not up or not up.filename:
-                continue
-            if (up.size or 0) > docsmod.MAX_BYTES:        # said by the upload itself: refused before it is read into memory
-                out.append({"ok": False, "filename": up.filename, "error": f"{up.filename} is {up.size / 1e6:.1f} MB: a document may be up to {docsmod.MAX_BYTES // (1024 * 1024)} MB"})
-                continue
-            body = up.file.read(docsmod.MAX_BYTES + 1)
-            try:
-                d = docsmod.add(db, eid, up.filename, body, estate_run=er, by=who(request), summarise=summarise, replaces=replaces or None)
-                e = estate(eid)
-                db.audit(e["workspace_id"], "document.replace" if replaces else "document.add", d["id"], {"filename": up.filename, "bytes": len(body), "sections": len(d["sections"])}, who(request))
-                out.append({"ok": True, "filename": up.filename, "document": d})
-            except ValueError as ex:
-                out.append({"ok": False, "filename": up.filename, "error": str(ex)})
+        with _export_slot(who(request), "document"):     # reading and splitting a document is work: a few at once, one batch per login
+          for up in files:
+              if not up or not up.filename:
+                  continue
+              if (up.size or 0) > docsmod.MAX_BYTES:        # said by the upload itself: refused before it is read into memory
+                  out.append({"ok": False, "filename": up.filename, "error": f"{up.filename} is {up.size / 1e6:.1f} MB: a document may be up to {docsmod.MAX_BYTES // (1024 * 1024)} MB"})
+                  continue
+              body = up.file.read(docsmod.MAX_BYTES + 1)
+              try:
+                  d = docsmod.add(db, eid, up.filename, body, estate_run=er, by=who(request), summarise=summarise, replaces=replaces or None)
+                  e = estate(eid)
+                  db.audit(e["workspace_id"], "document.replace" if replaces else "document.add", d["id"], {"filename": up.filename, "bytes": len(body), "sections": len(d["sections"])}, who(request))
+                  out.append({"ok": True, "filename": up.filename, "document": d})
+              except ValueError as ex:
+                  out.append({"ok": False, "filename": up.filename, "error": str(ex)})
+              except Exception as ex:
+                  if type(ex).__name__ != "SpendNotRecorded":
+                      raise
+                  out.append({"ok": False, "filename": up.filename, "error": NOT_COUNTED.replace("this question", "this document's summary").replace("the answer was stopped", "the document was not kept")})
         if not out:
             raise HTTPException(400, "no file was sent")
         forget_sessions(eid)                 # live conversations read the cards again
@@ -1729,6 +2172,9 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
 
     @app.delete("/api/documents/{did}")
     def delete_document(request: Request, did: str):
+        old = db.one("SELECT estate_id, uploaded_by FROM documents WHERE id=?", did)
+        if old:
+            _theirs(request, old["estate_id"], old["uploaded_by"], "remove this document")
         r = docsmod.remove(db, did)
         if not r:
             raise HTTPException(404, "no such document")
@@ -1800,15 +2246,15 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
             try:
                 note = notesmod.get(db, ref)
             except KeyError:
-                raise HTTPException(404, "that note no longer exists")
+                raise HTTPException(404, NOTHING)
             if note["estate_id"] != eid:
-                raise HTTPException(404, "that note belongs to another estate")
+                raise HTTPException(404, NOTHING)           # the same words whether the note is gone or is another workspace's
             out["object"] = note; out["provenance"] = note_provenance(note); out["name"] = note["title"] or ref
         elif kind == "document":
             sec = docsmod.get_section(db, ref, eid)
             if sec is None:
                 raise HTTPException(404, "that document section is no longer in the workspace (the document was replaced or removed)")
-            rows = db.q("SELECT payload_json FROM citations WHERE id=? AND owner_kind='turn'", cid)
+            rows = db.q("SELECT x.payload_json FROM citations x WHERE x.id=? AND x.owner_kind='turn' AND " + notesmod._IN_ESTATE, cid, eid, eid)
             quotes = []
             for r in rows:
                 for q in (json.loads(r["payload_json"] or "{}") or {}).get("quotes") or []:
@@ -1846,16 +2292,23 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
                 out["now"] = {"snapshot_id": act["id"], "found": now is not None, "id": now["id"] if now else None,
                               "formula": now.get("formula") if now else None,
                               "changed": bool(now and kind == "line_item" and now.get("formula") != obj.get("formula"))}
+        # where else it is cited: in this workspace only. The same id in another workspace is another workspace's business (M3)
         out["cited_in"] = {"turns": db.q("SELECT t.id AS turn_id, t.seq, t.conversation_id, c.title, t.created FROM citations x JOIN turns t ON t.id=x.owner_id "
-                                         "JOIN conversations c ON c.id=t.conversation_id WHERE x.id=? AND x.owner_kind='turn' ORDER BY t.created DESC LIMIT 20", cid),
-                           "notes": db.q("SELECT n.id, n.title, n.status, n.type FROM note_sources s JOIN notes n ON n.id=s.note_id WHERE s.citation_id=? "
-                                         "ORDER BY n.updated DESC LIMIT 20", cid)}
+                                         "JOIN conversations c ON c.id=t.conversation_id WHERE x.id=? AND x.owner_kind='turn' AND c.estate_id=? ORDER BY t.created DESC LIMIT 20", cid, eid),
+                           "notes": db.q("SELECT n.id, n.title, n.status, n.type FROM note_sources s JOIN notes n ON n.id=s.note_id WHERE s.citation_id=? AND n.estate_id=? "
+                                         "ORDER BY n.updated DESC LIMIT 20", cid, eid)}
         return out
 
     @app.get("/api/citations/{cid}")
-    def get_citation(cid: str):
-        """What a citation id opens. The id must be one the tools handed: recorded on a turn or a note, or held by a live session."""
-        row = db.one("SELECT * FROM citations WHERE id=? ORDER BY CASE owner_kind WHEN 'turn' THEN 0 ELSE 1 END LIMIT 1", cid)
+    def get_citation(request: Request, cid: str):
+        """What a citation id opens. The id must be one the tools handed: recorded on a turn or a note, or held by a live
+        session. An id is a hash of what it cites, so two workspaces can hold the same one: it is read from the workspace
+        the membership check chose for this login, and from no other."""
+        mine = getattr(request.state, "estate", None)
+        if mine:
+            row = db.one("SELECT x.* FROM citations x WHERE x.id=? AND " + notesmod._IN_ESTATE + " ORDER BY CASE x.owner_kind WHEN 'turn' THEN 0 ELSE 1 END LIMIT 1", cid, mine, mine)
+        else:
+            row = db.one("SELECT * FROM citations WHERE id=? ORDER BY CASE owner_kind WHEN 'turn' THEN 0 ELSE 1 END LIMIT 1", cid)
         if row:
             kind, model, ref, sid, prov, tool = row["kind"], row["model_id"], row["object_ref"], row["snapshot_id"], row["provenance"], row["source_ref"] or ""
             name = (json.loads(row["payload_json"] or "{}") or {}).get("name")
@@ -1870,7 +2323,7 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         else:
             eid = None
             for s in list(app.state.sessions.values()):
-                live = s.ev.resolve(cid)
+                live = s.ev.resolve(cid) if (not mine or s.w.estate_id == mine) else None
                 if live is not None:
                     kind, model, ref, sid, prov, tool, name, eid = live.kind, live.model, live.ref, live.snapshot_id, live.provenance, live.tool, live.name, s.w.estate_id
                     break
@@ -1992,7 +2445,8 @@ def create_app(data: str | Path, api_key: str | None = None, model_id: str = "cl
         except KeyError:
             raise HTTPException(404, "no such proposal")
         if p["estate_id"] != eid:
-            raise HTTPException(404, "that proposal belongs to another estate")
+            raise HTTPException(404, "no such proposal")          # one answer, whether it is nobody's or somebody else's
+        _theirs(request, eid, p.get("author_id"), "withdraw this proposal")
         out = planmod.withdraw(db, pid, by=who(request))
         forget_handles(eid)
         return out

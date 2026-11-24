@@ -1,0 +1,515 @@
+{
+ "title": "Getting started with /architect",
+ "lead": "You have just been given a login. This is what you will see, in the order you will meet it. It takes about ten minutes to read.",
+ "from": "Karim Lameer, CodelessOps",
+ "sections": [
+  {
+   "id": "sign-in",
+   "title": "Sign in",
+   "bert": "hello",
+   "body": [
+    "I created your login and sent you a username and a password. There is no sign-up page, and nobody else can make a login.",
+    "Read the notice on the sign-in page once. It says what I can see as the person running this instance, and it says that what you upload is your responsibility. Upload only what you are allowed to share."
+   ],
+   "screens": [
+    {
+     "name": "sign-in",
+     "alt": "The sign-in page",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.3281,
+       "y": 0.3894,
+       "tx": 0.2672,
+       "ty": 0.3469,
+       "text": "Your username and password, as I sent them. Change the password in Settings once you are in."
+      },
+      {
+       "n": 2,
+       "x": 0.3281,
+       "y": 0.6066,
+       "tx": 0.2672,
+       "ty": 0.5641,
+       "text": "The notice. It is short. It is the agreement between us."
+      }
+     ],
+     "image": "sign-in.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "workspaces",
+   "title": "Workspaces, Private and Shared",
+   "bert": "information",
+   "body": [
+    "Everything lives in a workspace: a set of Anaplan models, their documents, your chats and your notes. Nothing is remembered from one workspace to the next.",
+    "A workspace is Private or Shared. Private is yours alone. Shared is open to everyone in your team, which means your company, and to nobody else. I never see inside either."
+   ],
+   "screens": [
+    {
+     "name": "switcher",
+     "alt": "The workspace switcher, open",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.1898,
+       "y": 0.1096,
+       "tx": 0.2508,
+       "ty": 0.0671,
+       "text": "The workspace you are in. Click it to switch."
+      },
+      {
+       "n": 2,
+       "x": 0.1539,
+       "y": 0.3573,
+       "tx": 0.2148,
+       "ty": 0.3148,
+       "text": "Shared with your team. The line under the name says which team and who made it."
+      },
+      {
+       "n": 3,
+       "x": 0.1844,
+       "y": 0.4188,
+       "tx": 0.2453,
+       "ty": 0.3762,
+       "text": "Make a new workspace here."
+      }
+     ],
+     "image": "switcher.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "make-a-workspace",
+   "title": "Make a workspace from your Anaplan exports",
+   "body": [
+    "You need up to three exports from each model. All three are grid exports from the model settings in Anaplan, saved as CSV.",
+    "You can start with Line Items alone. Add the other two when you can: answers about imports, exports and module sizes need them."
+   ],
+   "list": [
+    "Line Items: in Anaplan, open Model Settings (the cog), then Line Items. Export the whole grid, all columns. This is the one that matters most: it holds every formula.",
+    "Modules: Model Settings, then Modules. Export the grid.",
+    "Actions: Model Settings, then Actions. Export each tab you use (Imports, Exports, Processes) or the combined grid.",
+    "One row per model on the new workspace page. Give each model the name your team calls it."
+   ],
+   "screens": [
+    {
+     "name": "new-workspace",
+     "alt": "The new workspace page",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.3983,
+       "y": 0.2386,
+       "tx": 0.3718,
+       "ty": 0.1586,
+       "text": "One row per model: its name, then the Line Items export, then Actions and Modules if you have them."
+      },
+      {
+       "n": 2,
+       "x": 0.3983,
+       "y": 0.5509,
+       "tx": 0.3718,
+       "ty": 0.4709,
+       "text": "Private or Shared with your team. Decide now; you can change it later."
+      },
+      {
+       "n": 3,
+       "x": 0.2617,
+       "y": 0.7896,
+       "tx": 0.2351,
+       "ty": 0.8696,
+       "text": "Parse and open. A model of a few thousand line items takes a few seconds."
+      }
+     ],
+     "image": "new-workspace.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "documents",
+   "title": "Add your project documents",
+   "bert": "evidence",
+   "body": [
+    "The exports say what was built. Your documents say why. Upload design records, meeting notes, handover notes, change requests: PDF, Word, Markdown or text.",
+    "Each document is split into sections, and each section is tied to the modules and line items it names. Nobody tags anything by hand. That link is what lets an answer quote the passage that records a decision."
+   ],
+   "screens": [
+    {
+     "name": "documents",
+     "alt": "The Documents page",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.39,
+       "y": 0.387,
+       "tx": 0.3634,
+       "ty": 0.307,
+       "text": "Drop files here. Up to twenty documents in a workspace."
+      },
+      {
+       "n": 2,
+       "x": 0.3065,
+       "y": 0.511,
+       "tx": 0.2799,
+       "ty": 0.431,
+       "text": "A card per document: what it is, its sections, and how often answers have quoted it."
+      },
+      {
+       "n": 3,
+       "x": 0.3139,
+       "y": 0.8778,
+       "tx": 0.2873,
+       "ty": 0.7978,
+       "text": "The modules and line items the document names. Click one to open it."
+      }
+     ],
+     "image": "documents.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "ask",
+   "title": "Ask a question",
+   "bert": "neutral",
+   "body": [
+    "Type a question in plain words. Name the module or line item if you know it. If you do not, describe it and it will be found.",
+    "These eight are good first questions. Each one shows a different thing the tool can do."
+   ],
+   "questions": true,
+   "screens": [
+    {
+     "name": "ask",
+     "alt": "The workspace page with the question box",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.4223,
+       "y": 0.2924,
+       "tx": 0.3958,
+       "ty": 0.3724,
+       "text": "Ask here, or use New chat on the left."
+      },
+      {
+       "n": 2,
+       "x": 0.1898,
+       "y": 0.4277,
+       "tx": 0.2508,
+       "ty": 0.3852,
+       "text": "Each question starts a chat. Follow-ups stay in the same chat and it remembers them."
+      }
+     ],
+     "image": "ask.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "read-an-answer",
+   "title": "Read an answer",
+   "body": [
+    "An answer is short on purpose. The first lines are the answer. Then comes one picture or set of cards for that kind of question. Then the evidence.",
+    "A language model writes the words. Code checks them before you see them: every name against your exports, every figure against what was looked up, every quote against the document it cites."
+   ],
+   "screens": [
+    {
+     "name": "answer-top",
+     "alt": "The top of an answer",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.8214,
+       "y": 0.3626,
+       "tx": 0.8823,
+       "ty": 0.3201,
+       "text": "The lead: the answer in two or three sentences. A coloured name is a real object; click it to open its formula."
+      },
+      {
+       "n": 2,
+       "x": 0.7628,
+       "y": 0.5294,
+       "tx": 0.8238,
+       "ty": 0.4869,
+       "text": "Beyond the exports: which documents and notes this answer read. Each one opens."
+      },
+      {
+       "n": 3,
+       "x": 0.9422,
+       "y": 0.8106,
+       "tx": 0.9812,
+       "ty": 0.7681,
+       "text": "The source: the passage, quoted word for word, with its document, section and date."
+      }
+     ],
+     "image": "answer-top.png",
+     "width": 1280,
+     "height": 800
+    },
+    {
+     "name": "answer-foot",
+     "alt": "The foot of an answer",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.4084,
+       "y": 0.6374,
+       "tx": 0.3818,
+       "ty": 0.5574,
+       "text": "Ask next: two or three questions that lead on from this one. One click asks it."
+      },
+      {
+       "n": 2,
+       "x": 0.2701,
+       "y": 0.8342,
+       "tx": 0.2436,
+       "ty": 0.7542,
+       "text": "The verdict. Verified means everything in the answer was tied to your workspace. Flagged means something was not, and it is marked."
+      },
+      {
+       "n": 3,
+       "x": 0.7682,
+       "y": 0.8297,
+       "tx": 0.7416,
+       "ty": 0.7497,
+       "text": "Context: exactly what the model was given for this answer, and each step it took."
+      }
+     ],
+     "image": "answer-foot.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "concise-and-full",
+   "title": "Concise and Full",
+   "body": [
+    "Full gives the picture, the sources and the detail. Concise gives only what you act on, with the rest one click away.",
+    "Use Concise when you are in the middle of building and want the next step. Use Full when you are deciding."
+   ],
+   "screens": [
+    {
+     "name": "composer",
+     "alt": "The chat box",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.8378,
+       "y": 0.9281,
+       "tx": 0.8112,
+       "ty": 0.8481,
+       "text": "Concise or Full, for the next question. Your usual choice is in Settings."
+      },
+      {
+       "n": 2,
+       "x": 0.4141,
+       "y": 0.8567,
+       "tx": 0.3875,
+       "ty": 0.7767,
+       "text": "Follow-ups go here. Enter sends."
+      }
+     ],
+     "image": "composer.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "build-plans",
+   "title": "Build plans, and the Planual flags",
+   "bert": "processing",
+   "body": [
+    "Ask for a plan to build something and you get instructions you can follow in Anaplan: modules, line items, formats, formulas, in build order. Every formula is parsed and every name checked before the plan is shown. Nothing is built for you. It is a plan.",
+    "Each planned line item carries flags by Planual rule number: as per a rule, or departing from one. A flag is advice. You may have a good reason to depart, and often a document already records it.",
+    "When the plan needs something an export cannot hold, such as the name of a list member, it marks the gap as You supply and carries on."
+   ],
+   "screens": [
+    {
+     "name": "plan",
+     "alt": "A build plan",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.9414,
+       "y": 0.3929,
+       "tx": 0.9812,
+       "ty": 0.3504,
+       "text": "What changes in an existing formula. Only the changed part is shown; the whole formula is one click away."
+      },
+      {
+       "n": 2,
+       "x": 0.9414,
+       "y": 0.5814,
+       "tx": 0.9812,
+       "ty": 0.5389,
+       "text": "Planual flags, by rule number, with one line of why."
+      },
+      {
+       "n": 3,
+       "x": 0.9422,
+       "y": 0.7802,
+       "tx": 0.9812,
+       "ty": 0.7377,
+       "text": "You supply: the one thing the plan could not know."
+      }
+     ],
+     "image": "plan.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "what-a-change-touches",
+   "title": "What a change touches",
+   "body": [
+    "Before you change a line item or a module, ask what it reaches. You get every line item that reads it, counted once, by how many formulas away it is, with the actions and the other models involved.",
+    "Reach follows formula references. It tells you where to look. It does not prove a value will change."
+   ],
+   "screens": [
+    {
+     "name": "reach",
+     "alt": "The reach of a change",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.4084,
+       "y": 0.1871,
+       "tx": 0.3818,
+       "ty": 0.1071,
+       "text": "The size of it: line items, modules, cells, actions, other models."
+      },
+      {
+       "n": 2,
+       "x": 0.4076,
+       "y": 0.3135,
+       "tx": 0.381,
+       "ty": 0.2335,
+       "text": "Rings by distance, or Steps module by module."
+      },
+      {
+       "n": 3,
+       "x": 0.2695,
+       "y": 0.6884,
+       "tx": 0.2086,
+       "ty": 0.6459,
+       "text": "The change at the centre. Each ring is one more formula away."
+      }
+     ],
+     "image": "reach.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "notes",
+   "title": "Notes: what you know that the model does not",
+   "body": [
+    "A note is something you tell the tool once: why a module is kept, who owns a feed, what must not be touched. It is used in later answers and cited like a document.",
+    "Save any answer as a note from the button under it, or write one on the Notes page. A note is a working assumption until someone confirms it, and it says which it is."
+   ],
+   "screens": [
+    {
+     "name": "notes",
+     "alt": "The Notes page",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.3917,
+       "y": 0.399,
+       "tx": 0.3652,
+       "ty": 0.319,
+       "text": "A note: what it says, what kind it is, whether it is confirmed, and what it is about."
+      },
+      {
+       "n": 2,
+       "x": 0.5278,
+       "y": 0.443,
+       "tx": 0.5012,
+       "ty": 0.523,
+       "text": "The object it is tied to. An answer about that object will read this note."
+      }
+     ],
+     "image": "notes.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "what-it-cannot-see",
+   "title": "What it cannot see",
+   "bert": "warning",
+   "body": [
+    "It reads exports, so it knows what an export holds. Some things are not in any export, and it will say so when a question depends on them."
+   ],
+   "list": [
+    "Pages, dashboards and saved views. It cannot tell you whether anyone looks at a line item.",
+    "List members. It knows a list exists and where it is used, not what is in it.",
+    "Data. No cell values, so it cannot tell you a number is wrong.",
+    "User access and selective access.",
+    "When nobody wrote a reason down, it says Not recorded. It does not guess."
+   ]
+  },
+  {
+   "id": "spend",
+   "title": "Your spend cap",
+   "body": [
+    "Each question costs a little, because a language model answers it. Your login has a cap. A question counts against the cap of whoever asked it, in a shared workspace too.",
+    "When you reach the cap, the next question is refused with a plain message and nothing is lost. Message me and I will raise it."
+   ]
+  },
+  {
+   "id": "tracing",
+   "title": "Tracing, and your choice",
+   "body": [
+    "Tracing sends a record of a question and its answer to a separate service, so that I can see why an answer went wrong. For your login it is off unless you turn it on.",
+    "It is your choice alone, in Settings. A colleague turning it on does not send your questions anywhere, even in a chat you share."
+   ],
+   "screens": [
+    {
+     "name": "tracing",
+     "alt": "The tracing setting",
+     "callouts": [
+      {
+       "n": 1,
+       "x": 0.8387,
+       "y": 0.2775,
+       "tx": 0.8121,
+       "ty": 0.1975,
+       "text": "Off, Structure (sizes and timings, no words) or Full. Off is where you start."
+      }
+     ],
+     "image": "tracing.png",
+     "width": 1280,
+     "height": 800
+    }
+   ]
+  },
+  {
+   "id": "who-to-ask",
+   "title": "Who to ask",
+   "bert": "question",
+   "body": [
+    "Me. Send me a message on LinkedIn: that is the one route, not email and not the website.",
+    "Tell me what you asked and what was wrong with the answer. If it is about access or a cap, say which login."
+   ],
+   "link": {
+    "text": "Karim Lameer on LinkedIn",
+    "href": "https://linkedin.com/in/karimlameer"
+   }
+  }
+ ],
+ "captured": "2026-11-24"
+}

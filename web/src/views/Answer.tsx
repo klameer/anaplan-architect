@@ -320,8 +320,9 @@ export function ContextPanel({ t }: { t: Turn }) {
 
 // ---------- one turn ----------
 export function TurnView({ t, eid, first, onSave, onAsk }: { t: Turn; eid: string; first: boolean; onSave: () => void; onAsk: (q: string, mode?: string) => void }) {
-  const { idx } = useApp()
+  const { idx, summary } = useApp()
   const x = t as any
+  const shared = (summary as any)?.access?.visibility === 'shared'
   const kind: string = x.kind && KIND[x.kind] ? x.kind : 'general'
   const concise = x.mode === 'concise'
   const [full, setFull] = useState(!concise)
@@ -346,7 +347,7 @@ export function TurnView({ t, eid, first, onSave, onAsk }: { t: Turn; eid: strin
   const md = (text: string) => <Markdown md={text} idx={idx} unverified={t.unverified} cites={cites} unchecked={t.unchecked} phantom={phantom} untraced={untraced} />
   return (
     <article className="ds-turn">
-      <div className="ds-kick"><span className="type"><Icon d={KIND[kind][1]} s={14} />{KIND[kind][0]}</span><span className="k">· {concise ? 'concise' : 'full'}</span></div>
+      <div className="ds-kick"><span className="type"><Icon d={KIND[kind][1]} s={14} />{KIND[kind][0]}</span><span className="k">· {concise ? 'concise' : 'full'}</span>{x.by_name && shared && <span className="k" data-asked-by={x.by_name}>· asked by {x.by_name}</span>}{x.by_was && <span className="k" data-asked-was={x.by_was}>· from a backup, where it was asked by {x.by_was}</span>}</div>
       {first ? <h1 className="ds-q">{t.q}</h1> : <h2 className="ds-q" style={{ fontSize: 21 }}>{t.q}</h2>}
       {steps.length > 0 && <details className="ds-steps"><summary>{steps.length} steps · read what the architect did</summary>
         <ol>{steps.map((s, i) => <li key={i}>{s.kind === 'model' ? `model: ${s.name}` : s.kind === 'check' ? `validator: ${s.args}` : `${s.name}(${s.args || ''})`} → {s.out}</li>)}</ol></details>}

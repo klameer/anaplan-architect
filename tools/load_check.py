@@ -16,6 +16,9 @@ What it asserts (the exit code is 1 when any fails):
   - sign-in stays quick (p95 under a second), measured over the whole run and separately while every login has a
     question in flight
   - at the limit a person is told to try again (429 with a plain message), never an error page
+  - one login uploading a long document into a model of 3,000 line items holds nobody else up: the upload is done in
+    well under a minute, and the notes the others write meanwhile each take under a second (security review
+    2026-11-24, H2: that upload used to hold the store's one write lock for minutes)
 
 `run()` is what the tests call with fewer logins and seconds (tests/test_load.py).
 """
@@ -422,7 +425,7 @@ class Login:
             time.sleep(self.rng.random() * 0.3)
 
 
-def run(logins: int = 8, seconds: float = 180, big_mb: int = 0, think: float = 0.35, extra_env: dict | None = None, say=print) -> dict:
+def run(logins: int = 8, seconds: float = 180, big_mb: int = 0, think: float = 0.35, extra_env: dict | None = None, say=print, doc_mb: float = 1.0) -> dict:
     """The whole check. Returns the report; report["failures"] is empty when the instance held."""
     import httpx
     fake = FakeModel(think)
@@ -504,6 +507,51 @@ def run(logins: int = 8, seconds: float = 180, big_mb: int = 0, think: float = 0
         fake.slow = 0.0
         if not report["flood"]["told_to_wait"] or not report["flood"]["answered"]:
             stats.fail(f"four questions at once from one login: {report['flood']} (some should be answered and the rest told to wait)")
+
+        if doc_mb:
+            say(f"one login uploads a {doc_mb} MB document into a model of 3,000 line items while the others write notes")
+            import csv, io as _io
+            p0 = people[0]
+            mark = f"LCMARKu{p0.n:02d}w8"
+            hdr_row = ["", "Format", "Formula", "Summary", "Applies To", "Time Scale", "Time Range", "Versions", "Style", "Cell Count", "Notes", "Referenced By", "Module Name"]
+            rows_ = [hdr_row]
+            for m in range(60):
+                mod = f"CAL{m:04d} Module {m}"
+                rows_.append([mod, "", "", "", "", "Not Applicable", "Not Applicable", "Not Applicable", "", "0", "", "", ""])
+                rows_ += [[f"Item {i}", '{"dataType":"NUMBER"}', "", "", "", "Month", "Model Calendar", "Not Applicable", "", "24", "", "", mod] for i in range(50)]
+            buf = _io.StringIO(); csv.writer(buf, lineterminator="\n").writerows(rows_)
+            r = p0.call("large-model", "POST", "/api/estates", ok=(200,), data={"name": f"Large {p0.name}", "model_names": [f"Large {mark}"]},
+                        files=[("line_items", ("Line Items.csv", buf.getvalue().encode(), "text/csv"))])
+            if r is None or r.status_code != 200:
+                stats.fail("the 3,000 line item model could not be made")
+            else:
+                eid = r.json()["id"]
+                para = (f"The quarterly review of {mark} covered many things and none of them is a module of this model. " * 8).strip()
+                doc = (f"# Minutes {mark}\n\nCAL0003 Module 3 was discussed.\n\n" + "\n\n".join(para for _ in range(int(doc_mb * 1024 * 1024 / (len(para) + 2))))).encode()
+                took = {}
+
+                def up():
+                    t0 = time.time()
+                    rr = p0.call("large-document", "POST", f"/api/estates/{eid}/documents", ok=(200,), files=[("files", (f"Minutes {mark}.md", doc, "text/markdown"))])
+                    took["s"] = time.time() - t0; took["status"] = rr.status_code if rr is not None else 0
+                    took["ok"] = bool(rr is not None and rr.status_code == 200 and rr.json()["results"][0]["ok"])
+                th = threading.Thread(target=up); th.start()
+                n0 = len(stats.rows)
+                while th.is_alive():
+                    for q in people[1:]:
+                        q.call("note-during-upload", "POST", f"/api/estates/{q.ws[0]['id']}/notes", ok=(200,),
+                               json={"title": f"note {q.ws[0]['mark']}", "body": f"written by {q.ws[0]['mark']} while a long document is read", "scopes": ["estate"]})
+                    time.sleep(0.05)
+                th.join()
+                notes = [s for k_, st, s in stats.rows[n0:] if k_ == "note-during-upload"]
+                report["large_document"] = {"mb": round(len(doc) / 1e6, 2), "line_items": 3000, "seconds": round(took.get("s", 0), 1), "ok": took.get("ok"),
+                                            "notes_written_meanwhile": len(notes), "note_p95": p95(notes), "note_max": round(max(notes), 3) if notes else 0}
+                if not took.get("ok"):
+                    stats.fail(f"the long document was not read: status {took.get('status')}")
+                if took.get("s", 0) > 60:
+                    stats.fail(f"the long document took {took['s']:.0f}s: linking it to a large model must take seconds")
+                if notes and max(notes) >= 3.0:
+                    stats.fail(f"a note written while the long document was read took {max(notes):.1f}s: the upload held the store")
 
         if big_mb:
             say(f"four logins each upload a {big_mb} MB export at the same moment")

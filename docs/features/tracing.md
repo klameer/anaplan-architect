@@ -16,7 +16,8 @@ does not get to read other people's questions unless they said yes.
 | **Structure** | A run tree: the tool names and their order, sizes, tokens, cost, timings, the verdict's counts. Not the question, the answer, tool arguments or results, document text, or any object name. |
 | **Full** | The same tree with the content. |
 
-- The admin's own questions: **Full** by default.
+- The questions of the login the instance was set up with (the first admin, who also set the key): **Full** by default.
+- A login made an admin later: **Off**, like any other login, until it turns tracing on for itself.
 - Every other login: **Off** by default.
 - With no logins at all (one person, one machine): **Full**, because the person asking is the one who set the key.
 

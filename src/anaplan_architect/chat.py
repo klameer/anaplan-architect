@@ -81,23 +81,69 @@ PRICES = {"claude-sonnet-5": (2.0, 10.0), "claude-opus-5": (5.0, 25.0), "claude-
           "claude-fable-5": (10.0, 50.0)}
 
 
+class Withdrawn(Exception):
+    """The asker lost the workspace (moved out of its team, disabled, or it was made private) while the answer was being
+    written. The turn ends there: nothing more is read for them, and nothing is shown or kept."""
+
+
+class SpendNotRecorded(Exception):
+    """A model call returned and its cost could not be put on the asker's ledger (the store was busy past its
+    patience). The turn stops: a call is never counted as free."""
+
+
 class SpendCapReached(Exception):
     """Raised by a session's spend gate before a model call the login may no longer make."""
 
 
+# OpenAI models, USD per million tokens (input, output, cached input), standard tier, prompts under 272,000 tokens, as
+# reported in November 2026: the GPT-6 family by OpenAI's help centre and the trade press, which agree; GPT-5.5 by
+# third-party price lists only. Looked up on 2026-11-24 and not checked against an invoice. They move: set
+# ARCHITECT_PRICE_IN, ARCHITECT_PRICE_OUT and ARCHITECT_PRICE_CACHED (USD per million tokens) to what your account is
+# charged and those are used instead, for any model that is not Claude. A model with no price here and none set is
+# metered at the Sonnet 5 rate and its billed amount is shown as unknown, never as zero.
+OTHER_PRICES = {"gpt-6.1-sol": (2.0, 10.0, 0.10), "gpt-6.1-terra": (1.0, 5.0, 0.05), "gpt-6-astra": (10.0, 50.0, 1.0), "gpt-6-luna": (0.10, 0.50, 0.01),
+                "gpt-5.5": (5.0, 30.0, 0.5), "gpt-5.1": (1.25, 10.0, 0.125), "gpt-5-mini": (0.25, 2.0, 0.025), "gpt-5-nano": (0.05, 0.40, 0.005),
+                "gpt-5": (1.25, 10.0, 0.125)}
+def price_of(model_id: str) -> tuple[float, float, float] | None:
+    """(input, output, cached input) in USD per million tokens for a model that is not Claude, or None when nobody has said."""
+    import os
+    try:
+        if os.environ.get("ARCHITECT_PRICE_IN") and os.environ.get("ARCHITECT_PRICE_OUT"):
+            i, o = float(os.environ["ARCHITECT_PRICE_IN"]), float(os.environ["ARCHITECT_PRICE_OUT"])
+            return i, o, float(os.environ.get("ARCHITECT_PRICE_CACHED") or i * 0.1)
+    except ValueError:
+        pass
+    m = (model_id or "").lower()
+    for name in sorted(OTHER_PRICES, key=len, reverse=True):
+        if m == name or m.startswith(name + "-") or m.startswith(name + "@") or m.endswith("/" + name):
+            return OTHER_PRICES[name]
+    return None
+
+
+def _priced(u: dict, model_id: str) -> float | None:
+    if (model_id or "").startswith("claude"):
+        inp, out = PRICES.get(model_id, PRICES["claude-sonnet-5"])
+        return round((u.get("input", 0) * inp + u.get("output", 0) * out + u.get("cache_read", 0) * inp * 0.1 + u.get("cache_write", 0) * inp * CACHE_WRITE[CACHE_TTL]) / 1e6, 5)
+    p = price_of(model_id)
+    if p is None:
+        return None
+    return round((u.get("input", 0) * p[0] + u.get("output", 0) * p[1] + (u.get("cache_read", 0) + u.get("cache_write", 0)) * p[2]) / 1e6, 5)
+
+
 def metered_usd(u: dict, model_id: str) -> float:
-    """What a call counts for against a spend cap: its list price; on a flat-rate route, the default model's list price."""
-    return cost_usd(u, model_id) or cost_usd(u, "claude-sonnet-5")
+    """What a call counts for against a spend cap: the model's own list price when it has one (Claude, an OpenAI model in
+    the table, or the prices set for this instance); otherwise the default model's list price, so a cap always counts."""
+    own = _priced(u, model_id)
+    return own if own else (_priced(u, "claude-sonnet-5") or 0.0)
 
 
-def cost_usd(u: dict, model_id: str) -> float:
-    """List-price cost. A non-Claude model (the Codex subscription route) is
-    flat-rate, so it prices at zero; the tokens are still recorded."""
-    if not (model_id or "").startswith("claude"):
+def cost_usd(u: dict, model_id: str, flat: bool = False) -> float:
+    """What a call is billed: its list price on a route that is paid per call; zero on a flat-rate route (`flat`: a
+    ChatGPT subscription through Codex, whose client says so) and for a model nobody has given a price for (the admin
+    panel says so). The tokens are recorded either way."""
+    if flat and not (model_id or "").startswith("claude"):
         return 0.0
-    inp, out = PRICES.get(model_id, PRICES["claude-sonnet-5"])
-    usd = (u.get("input", 0) * inp + u.get("output", 0) * out + u.get("cache_read", 0) * inp * 0.1 + u.get("cache_write", 0) * inp * CACHE_WRITE[CACHE_TTL]) / 1e6
-    return round(usd, 5)
+    return _priced(u, model_id) or 0.0
 
 
 # Every code span, however short, so a `0` is consumed as a span and the scan never jumps from its closing backtick to the
@@ -354,6 +400,7 @@ class Session:
         self.user = user               # the account asking; recorded on every answer for cost per account
         self.trace_level = None        # what this turn may send to the outside tracer: off | structure | content; set per turn by who asked
         self.spend_gate = None         # called before every model call; raises SpendCapReached when the login is over its cap
+        self.allowed = None            # called before every model call and before an answer is kept; raises Withdrawn when the asker has lost the workspace
         self.on_spend = None           # called with the usage of every model call as it returns (the login's spend ledger)
         self.edit_pass = True          # a long draft is cut by one short model call before the validator (the web layer sets it per turn from the login's setting)
         self.recorder = recorder       # called with each finished turn (the store keeps conversations)
@@ -419,6 +466,7 @@ class Session:
             if isinstance(c, list):
                 c = [({k: v for k, v in b.items() if k != "cache_control"} if isinstance(b, dict) else b) for b in c]
             msgs.append({"role": m["role"], "content": c})
+        self._call_levels = [m.get("_trace", "content") for m in self.messages]      # beside the messages, never in what the model is sent
         last = msgs[-1]
         if isinstance(last["content"], str):
             last["content"] = [{"type": "text", "text": last["content"], "cache_control": self.CACHE}]
@@ -426,10 +474,10 @@ class Session:
             last["content"][-1] = dict(last["content"][-1], cache_control=self.CACHE)
         return msgs
 
-    def ask(self, question: str, mode: str = "full") -> str:
+    def ask(self, question: str, mode: str = "full", **asker) -> str:
         """Blocking form: consume the stream, return the final text."""
         text = ""
-        for ev in self.ask_stream(question, mode):
+        for ev in self.ask_stream(question, mode, **asker):
             if ev["type"] == "text":
                 text += ev["delta"]
             elif ev["type"] == "done":
@@ -440,33 +488,64 @@ class Session:
         """One model call, streamed when the client supports it. Yields
         ("text", delta) and ("tool_start", name) events; returns the final message.
         Traced as one generation: what the model was last given (not the material), what came back, tokens and cost."""
+        if self.allowed is not None:
+            self.allowed()                            # before the call, every call: an asker who has lost the workspace gets no more of it
         if self.spend_gate is not None:
             self.spend_gate()                         # before the call, every call: a turn of many calls stops when the cap is reached
-        kw = kw or dict(model=self.model_id, max_tokens=8000, system=self._system(), tools=Toolbox.schema(), messages=self._messages_for_call())
+        levels = None
+        if kw is None:
+            kw = dict(model=self.model_id, max_tokens=8000, system=self._system(), tools=Toolbox.schema(), messages=self._messages_for_call())
+            levels = self._call_levels
         tr = tr if tr is not None else telemetry.NullTurn()
-        with tr.generation(name, self.model_id, input=_trace_input(kw, self._material or "")) as g:
+        with tr.generation(name, self.model_id, input=_trace_input(kw, self._material or "", levels)) as g:
             if hasattr(self.client.messages, "stream"):
-                with self.client.messages.stream(**kw) as stream:
-                    for event in stream:
-                        et = getattr(event, "type", "")
-                        if et == "content_block_start" and getattr(event.content_block, "type", "") == "tool_use":
-                            yield ("tool_start", event.content_block.name)
-                        elif et == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
-                            yield ("text", event.delta.text)
-                    r = stream.get_final_message()
+                got: list[str] = []
+                try:
+                    with self.client.messages.stream(**kw) as stream:
+                        for event in stream:
+                            et = getattr(event, "type", "")
+                            if et == "content_block_start" and getattr(event.content_block, "type", "") == "tool_use":
+                                yield ("tool_start", event.content_block.name)
+                            elif et == "content_block_delta" and getattr(event.delta, "type", "") == "text_delta":
+                                got.append(event.delta.text)
+                                yield ("text", event.delta.text)
+                        r = stream.get_final_message()
+                except GeneratorExit:
+                    # The reader went away while the model was writing. The provider has been sent the whole request and
+                    # has written this much: that was spent, whether or not a usage figure ever arrives. It goes on the
+                    # ledger as an estimate (security review 2026-11-24, M1).
+                    if self.on_spend is not None:
+                        try:
+                            self.on_spend(_estimate(kw, "".join(got)))
+                        except Exception:
+                            pass
+                    raise
+                u = self._count(r, kw)
             else:
                 r = self.client.messages.create(**kw)
+                u = self._count(r, kw)                # counted before any of it is shown: a reader who leaves at the first word has still been answered
                 for b in r.content:
                     if getattr(b, "type", "") == "text" and b.text:
                         yield ("text", b.text)
-            u = _usage_of(r)
-            if u and self.on_spend is not None:       # on the ledger as soon as the call returns: a turn that fails or is abandoned later has still spent it
-                try:
-                    self.on_spend(u)
-                except Exception:
-                    pass
-            g.update(output=_preview_final(r), usage=u, cost_usd=cost_usd(u, self.model_id) if u else None)
+            if self.allowed is not None:
+                self.allowed()                        # and again when it returns: no tool reads the workspace for an asker who lost it meanwhile
+            g.update(output=_preview_final(r), usage=u, cost_usd=cost_usd(u, self.model_id, getattr(self.client, "flat_rate", False)) if u else None)
         yield ("final", r)
+
+    def _count(self, r, kw: dict):
+        """A call that has returned goes on the asker's ledger at once: before its text is handed on, so a turn that
+        fails or is abandoned afterwards has still paid for it. With no usage figure from the provider, an estimate."""
+        u = _usage_of(r)
+        if self.on_spend is None:
+            return u
+        spent = u or _estimate(kw, "".join(getattr(b, "text", "") or "" for b in getattr(r, "content", []) or []))
+        try:
+            self.on_spend(spent)
+        except SpendCapReached:
+            raise
+        except Exception as e:                    # the ledger could not be written: the turn stops here. A call is never counted as free.
+            raise SpendNotRecorded(str(e)) from e
+        return u
 
     def _sources(self) -> list[str]:
         """What the model was given, for the figure check: the estate material, every user message (question plus
@@ -485,11 +564,19 @@ class Session:
                         out.append(str(b.get("text") or b.get("content") or ""))
         return out
 
-    def ask_stream(self, question: str, mode: str = "full"):
+    def ask_stream(self, question: str, mode: str = "full", **asker):
         """Generator of events for a UI (the shapes are on _stream_turn). A turn that fails or is abandoned before its
         answer leaves nothing behind: the question, and any tool_use the model asked for, are removed again. Otherwise
         the next call would carry a dangling question, or a tool_use with no tool_result, which the API refuses for the
-        rest of the conversation."""
+        rest of the conversation.
+
+        `asker` is who is asking this one question: user, trace_level, edit_pass, spend_gate, on_spend. A chat in a
+        shared workspace has more than one asker, so these are given with the question, by the caller that holds the
+        session's lock, and never set on the session by a request that is only waiting its turn (security review
+        2026-11-24, M4)."""
+        for k in ("user", "trace_level", "edit_pass", "spend_gate", "on_spend", "allowed"):
+            if k in asker:
+                setattr(self, k, asker[k])
         base = len(self.messages)
         self._turn_done = False
         try:
@@ -500,6 +587,9 @@ class Session:
                 if isinstance(e, Exception):
                     self._log({"role": "error", "text": f"{type(e).__name__}: {e}"[:500]})
             raise
+        finally:
+            for m in self.messages[base:]:                # what this turn put into the history is its asker's, at the level they chose
+                m.setdefault("_trace", self.trace_level or "content")
 
     # ---------- what an answer was given, and what it did ----------
     def _context_base(self, question: str, user_block: str, notes: list[dict]) -> list[dict]:
@@ -665,13 +755,15 @@ class Session:
                     tr.scores({"cited": ver["cited"], "unchecked": ver["unchecked"], "unverified": ver["unverified"], "phantom": len(ver["phantom"]),
                                "untraced_figures": len(fig.get("untraced") or []), "clean": bool(ver["clean"]), "cost_usd": usage["cost_usd"],
                                "tool_calls": len(calls), "model_calls": usage["calls"]})
+                    if self.allowed is not None:
+                        self.allowed()                    # lost while the answer was being written: it is neither shown nor kept
                     tr.output(text)
                     self._log({"role": "assistant", "text": text, "unverified_names": missing, "unchecked": a["unchecked"], "citations": a["cited"],
                                "verification": ver, "tools": calls, "usage": usage, "user": self.user, "mode": mode, "kind": kind, "edit": edited})
                     if why and why["unsupported"]:                        # never filled in: the page says so above whatever the model wrote
                         text = ("**Not recorded.** No document or note in this workspace gives a reason. What follows is what the estate shows, not a recorded reason.\n\n" + text)
                     turn = {"q": question, "a": text, "tools": calls, "unverified": missing, "unchecked": a["unchecked"], "citations": a["cited"],
-                            "verification": ver, "usage": usage, "when": datetime.datetime.now().isoformat(timespec="seconds"), "by": self.user,
+                            "verification": ver, "usage": usage, "when": datetime.datetime.now().isoformat(timespec="seconds"), "by": self.user, "trace_level": self.trace_level,
                             "mode": mode, "kind": kind, "context": context, "run": runrec, "blocks": blocks}
                     if edited is not None:
                         turn["edit"] = edited
@@ -713,7 +805,7 @@ class Session:
                 self.messages.append({"role": "user", "content": results})
                 yield {"type": "text", "delta": ""}     # a new answer segment starts; UI clears think-aloud text
             turn = {"q": question, "a": stopped, "tools": [], "unverified": [], "unchecked": [], "citations": [],
-                    "verification": None, "usage": self.last_turn_usage(), "when": datetime.datetime.now().isoformat(timespec="seconds"), "by": self.user,
+                    "verification": None, "usage": self.last_turn_usage(), "when": datetime.datetime.now().isoformat(timespec="seconds"), "by": self.user, "trace_level": self.trace_level,
                     "mode": mode, "kind": "general", "blocks": []}
             self.turns.append(turn)
             if self.recorder is not None:             # a turn that stopped is kept like any other: the page shows it and its cost
@@ -862,7 +954,17 @@ class Session:
         # what to ask next: made by code from what this answer was about, never by the model
         from . import followups
         plan = next((b["plan"] for b in blocks if b["type"] == "build_plan"), None)
-        nxt = followups.suggest(kind, followups.subject_of(blocks, a["cited"], text), flags=((plan or {}).get("planual") or {}).get("departs", 0),
+        named = []                                   # names the answer uses that the workspace has, though no tool handed them this turn
+        for nm in a.get("unchecked") or []:
+            try:
+                k, m, obj = self.w.find_object(nm)
+            except Exception:
+                continue
+            if k == "line_item":
+                named.append({"kind": k, "ref": f"{obj.module}.{obj.name}", "model": m.name})
+            elif k == "module":
+                named.append({"kind": k, "ref": obj.name, "model": m.name})
+        nxt = followups.suggest(kind, followups.subject_of(blocks, a["cited"], text, named), flags=((plan or {}).get("planual") or {}).get("departs", 0),
                                 not_recorded=any(b["type"] == "not_recorded" for b in blocks))
         if nxt:
             blocks.append({"type": "followups", "items": nxt})
@@ -908,9 +1010,10 @@ class Session:
         s = cls(w, cid=cid, **kw)
         s.turns = [dict(t) for t in turns]
         s.created = turns[0].get("when", s.created) if turns else s.created
-        for t in s.turns:
-            s.messages.append({"role": "user", "content": t["q"]})
-            s.messages.append({"role": "assistant", "content": [{"type": "text", "text": t["a"]}]})
+        for t in s.turns:                                 # from the store: a turn with no level recorded was never agreed to be sent
+            lvl = t.get("trace_level") or "off"
+            s.messages.append({"role": "user", "content": t["q"], "_trace": lvl})
+            s.messages.append({"role": "assistant", "content": [{"type": "text", "text": t["a"]}], "_trace": lvl})
             s.ev.restore(t.get("citations") or [])
         return s
 
@@ -969,7 +1072,7 @@ class Session:
         for u in self.turn_usage:
             for k in ("input", "output", "cache_read", "cache_write"):
                 out[k] += u[k]
-        out["cost_usd"] = cost_usd(out, self.model_id)
+        out["cost_usd"] = cost_usd(out, self.model_id, getattr(self.client, "flat_rate", False))
         out["metered_usd"] = metered_usd(out, self.model_id)
         return out
 
@@ -988,6 +1091,17 @@ def _usage_of(r) -> dict | None:
         return None
     return {"input": getattr(u, "input_tokens", 0) or 0, "output": getattr(u, "output_tokens", 0) or 0,
             "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0, "cache_write": getattr(u, "cache_creation_input_tokens", 0) or 0}
+
+
+def _estimate(kw: dict, written: str) -> dict:
+    """What a call cost when the provider gave no usage: everything it was sent, and what it had written so far, at
+    about four characters a token. An estimate, marked as one."""
+    import json as _json
+    try:
+        sent = _json.dumps([kw.get("system"), kw.get("messages"), kw.get("tools")], default=str, ensure_ascii=False)
+    except Exception:
+        sent = str(kw.get("messages"))
+    return {"input": est_tokens(sent), "output": est_tokens(written), "cache_read": 0, "cache_write": 0, "estimated": True}
 
 
 def _preview_message(m: dict, limit: int = 2000) -> object:
@@ -1009,12 +1123,23 @@ def _preview_message(m: dict, limit: int = 2000) -> object:
     return out
 
 
-def _trace_input(kw: dict, material: str) -> dict:
+def _withheld(m: dict) -> dict:
+    """An earlier message whose asker did not agree to its words being sent: its shape, never its text."""
+    c = m.get("content")
+    blocks = c if isinstance(c, list) else [c]
+    chars = sum(len(str((b.get("text") or b.get("content") or "") if isinstance(b, dict) else (getattr(b, "text", None) or b or ""))) for b in blocks)
+    return {"withheld": "asked by a login that had not turned content tracing on", "blocks": len(blocks), "chars": chars}
+
+
+def _trace_input(kw: dict, material: str, levels: list | None = None) -> dict:
     """What a generation was given, for the trace: the fixed instructions in full, the estate material as a size (its text
-    only when LANGSMITH_TRACE_MATERIAL is set, for a self-hosted store), and every message of the loop, cut per block."""
+    only when LANGSMITH_TRACE_MATERIAL is set, for a self-hosted store), and every message of the loop, cut per block.
+    `levels` is, message by message, what its asker let the tracer have: an earlier turn asked by someone whose level
+    was not content goes as its shape only, whoever is asking now (security review 2026-11-24, M5)."""
     import os
+    ok = lambda i: levels is None or i >= len(levels) or levels[i] == "content"
     inp = {"system": CHAT_SYSTEM, "material_chars": len(material),
-           "messages": [{"role": m["role"], "content": _preview_message(m)} for m in kw["messages"]],
+           "messages": [{"role": m["role"], "content": _preview_message(m) if ok(i) else _withheld(m)} for i, m in enumerate(kw["messages"])],
            "tools": [t["name"] for t in kw.get("tools") or []]}
     if os.environ.get("LANGSMITH_TRACE_MATERIAL", "").strip().lower() in ("1", "true", "yes"):
         inp["material"] = material
@@ -1059,7 +1184,7 @@ def transcript_turns(recs: list[dict], model_id: str = "claude-sonnet-5") -> lis
             if not u and pending:
                 u = {k: sum(x.get(k, 0) for x in pending) for k in ("input", "output", "cache_read", "cache_write")}; u["calls"] = len(pending)
             if u and "cost_usd" not in u:
-                u["cost_usd"] = cost_usd(u, model_id)
+                u["cost_usd"] = cost_usd(u, model_id, True)          # read back from a transcript: nothing says which route it was asked on, so only Claude is priced
             turns.append({"q": q["text"], "a": r["text"], "tools": r.get("tools", []), "unverified": r.get("unverified_names", []),
                           "unchecked": r.get("unchecked", []), "citations": r.get("citations", []), "verification": r.get("verification"),
                           "usage": u, "when": r.get("when", ""), "by": r.get("user")})

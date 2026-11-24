@@ -97,19 +97,35 @@ class CodexAuth:
                 if access:
                     return access
                 raise CodexAuthError(f"no refresh_token in {self.path}; run `codex login`")
-            import httpx
-            r = httpx.post(CODEX_TOKEN_URL, json={"client_id": CODEX_CLIENT_ID, "grant_type": "refresh_token", "refresh_token": refresh,
-                                                  "scope": "openid profile email"}, timeout=30.0)
-            if r.status_code != 200:
+            status, b = _post_json(CODEX_TOKEN_URL, {"client_id": CODEX_CLIENT_ID, "grant_type": "refresh_token", "refresh_token": refresh,
+                                                     "scope": "openid profile email"})
+            if status != 200:
                 # the status only: the reply can name the account or the token, and a model error is shown to whoever asked
-                raise CodexAuthError(f"Codex token refresh failed ({r.status_code}); run `codex login` on the server")
-            b = r.json()
+                raise CodexAuthError(f"Codex token refresh failed ({status}); run `codex login` on the server")
             for k in ("access_token", "refresh_token", "id_token"):
                 if b.get(k):
                     t[k] = b[k]
             d["tokens"] = t; d["last_refresh"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             tmp = self.path.with_suffix(".json.tmp"); tmp.write_text(json.dumps(d, indent=2), encoding="utf-8"); os.replace(tmp, self.path)
             return t["access_token"]
+
+
+def _post_json(url: str, body: dict, timeout: float = 30.0) -> tuple[int, dict]:
+    """One JSON POST with the standard library: (status, reply as a dict, {} when it is not one). No HTTP package is
+    asked for by name: which one the model SDKs bring changes between their versions (found 2026-11-24, when the suite
+    was first run in an environment built from constraints.txt: the import this replaced was not installed there)."""
+    import urllib.request, urllib.error
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers={"content-type": "application/json", "accept": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            status, raw = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, b""
+    try:
+        out = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        out = {}
+    return status, out if isinstance(out, dict) else {}
 
 
 # ---------- Anthropic-shaped blocks the Session reads back ----------
@@ -226,6 +242,8 @@ class _Stream:
 class CodexClient:
     """`client.messages.stream(...)` over the Codex backend. `inner_factory(token)`
     may be injected (tests); by default it builds an OpenAI SDK client."""
+    flat_rate = True          # a ChatGPT subscription: nothing is billed per call (chat.cost_usd reads this)
+
     def __init__(self, model: str = DEFAULT_MODEL, reasoning_effort: str | None = "medium", base_url: str = CODEX_BASE_URL,
                  auth: CodexAuth | None = None, inner_factory=None):
         self.model = model; self.effort = reasoning_effort; self.base_url = base_url

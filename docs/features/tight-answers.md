@@ -28,10 +28,17 @@ draft, when the edit:
 - holds a figure the draft did not;
 - changed a single character inside a quoted passage;
 - dropped a citation the lead rests on, the Brief itself, or the words *Not recorded*;
-- is not shorter.
+- is not shorter;
+- is anything but the draft with whole units taken out: its sentences, bullets, headings and table rows, in its order,
+  must be sentences, bullets, headings and rows of the draft, in the draft's order, each exactly as the draft has it,
+  marks included. A sentence with its head cut off, two fragments joined at a colon, a heading made of a sentence, a
+  word struck through and a sentence moved or said twice are all refused;
+- holds a link or an address the draft did not.
 
-What the code cannot see is a new claim in plain words with no name, figure or quote in it. The editor is told not to
-add one, and it is given only the question and the draft, so it has nothing to add from.
+The last two are from the security review of 2026-11-24. Before them a shorter text passed for a cut one: an edit
+could drop ten sentences and add one of its own, a claim in plain words with no name, figure or quote in it, or a
+link. Now the editor removes whole sentences, bullets, rows and sections and changes nothing it keeps. The cost: an
+edit that reworded a sentence to shorten it is thrown away and the draft stands, so fewer answers are cut than before.
 
 ## How to use it
 

@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://codelessops.com/anaplan-architect/"><b>Website</b></a> ·
+  <a href="https://codelessops.com/anaplan-architect/getting-started/"><b>Getting started</b></a> ·
   <a href="docs/WALKTHROUGH.md"><b>Walkthrough</b></a> ·
   <a href="docs/features/README.md"><b>Features</b></a> ·
   <a href="docs/SECURITY.md"><b>Security</b></a> ·

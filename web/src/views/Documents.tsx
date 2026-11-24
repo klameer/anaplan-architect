@@ -14,7 +14,8 @@ type Doc = { id: string; title: string; doc_type: string; filename: string; ext:
 type Payload = { documents: Doc[]; totals: { documents: number; sections: number; tokens: number }; limits: { documents: number; bytes: number; note: string }; results?: { ok: boolean; filename: string; error?: string }[] }
 
 export function DocumentsPage() {
-  const { route, idx, toast, refresh, openEvidence } = useApp()
+  const { route, idx, toast, refresh, openEvidence, summary } = useApp()
+  const shared = (summary as any)?.access?.visibility === 'shared'
   const eid = route.eid!
   const [d, setD] = useState<Payload | null>(null)
   const [busy, setBusy] = useState('')
@@ -73,7 +74,7 @@ export function DocumentsPage() {
             <span className="hd">{s.heading || 'opening'}</span><span className="ds-chips">{s.names!.slice(0, 5).map(n => <Obj key={n} text={n} idx={idx} />)}{s.names!.length > 5 && <span className="ds-chip">+{s.names!.length - 5}</span>}</span></div>)}</div>}
         {doc.objects.length > 0 && openDoc !== doc.id && <button className="ds-aff" style={{ alignSelf: 'flex-start' }} onClick={() => setOpenDoc(doc.id)}>which sections name which objects</button>}
         {doc.objects.length > 0 && (() => { const refs = Array.from(new Set(doc.objects.map(o => o.ref))); return <div className="ds-chips">{refs.slice(0, 4).map(r => <Obj key={r} text={r} idx={idx} />)}{refs.length > 4 && <span className="ds-chip">+{refs.length - 4} objects</span>}</div> })()}
-        <div className="da"><span>read {doc.uploaded_at.slice(0, 10)}</span><span className="grow" /><button disabled={!!busy} onClick={() => { setReplacing(doc); setTimeout(() => repl.current?.click(), 0) }}>Replace with a new version</button><button disabled={!!busy} onClick={() => remove(doc)}>Remove</button></div>
+        <div className="da"><span>read {doc.uploaded_at.slice(0, 10)}{(doc as any).uploaded_by_name && shared ? ` · added by ${(doc as any).uploaded_by_name}` : ''}{(doc as any).uploaded_by_was ? ` · from a backup, where it was added by ${(doc as any).uploaded_by_was}` : ''}</span><span className="grow" /><button disabled={!!busy} onClick={() => { setReplacing(doc); setTimeout(() => repl.current?.click(), 0) }}>Replace with a new version</button><button disabled={!!busy} onClick={() => remove(doc)}>Remove</button></div>
       </div> })}</div>
     <Sec k="How a document is used" />
     <div className="ds-list">

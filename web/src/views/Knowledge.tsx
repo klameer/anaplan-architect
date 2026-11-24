@@ -76,7 +76,7 @@ function NoteCard({ n, onChange, onEdit }: { n: Note; onChange: () => void; onEd
         <span className={'pill ' + (n.status === 'user_confirmed' ? '' : n.status === 'superseded' ? 'off' : 'amber')}>{STATUS_LABEL[n.status]}</span>
         {n.review_flag && <span className="pill amber" title="Evidence this note cites moved when the estate went to a newer snapshot">needs review</span>}
         {n.scope_labels.map((s, i) => <span key={i} className="scope">{s.startsWith('model:') ? <Obj text={s.slice(6)} idx={idx} /> : s.includes('::') ? <Obj text={s.split('::')[1]} idx={idx} /> : <code>{s}</code>}</span>)}
-        <span className="muted small grow" title={when(n.updated)}>{ago(n.updated)} · {n.origin_kind === 'answer' ? 'saved from an answer' : n.origin_kind === 'chat_tool' ? 'kept by the architect' : n.origin_kind === 'import' ? 'imported' : 'typed'}</span>
+        <span className="muted small grow" title={when(n.updated)}>{ago(n.updated)} · {n.origin_kind === 'answer' ? 'saved from an answer' : n.origin_kind === 'chat_tool' ? 'kept by the architect' : n.origin_kind === 'import' ? 'imported' : 'typed'}{(n as any).author_name ? ` · by ${(n as any).author_name}` : ''}{(n as any).author_was ? ` · from a backup, where it was by ${(n as any).author_was}` : ''}</span>
         <button className="small quiet" onClick={() => setOpen(!open)}>{open ? 'less' : 'more'}</button>
       </div>
       <div className={'note-body' + (open ? '' : ' clamp')}><Markdown md={n.body} idx={idx} /></div>

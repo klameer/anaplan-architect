@@ -14,6 +14,10 @@ from .db import Db, now
 MAX_DOCS = 20
 MAX_BYTES = 10 * 1024 * 1024
 MAX_UNZIPPED = 40 * 1024 * 1024    # what a Word file's document.xml may unzip to: a 10 MB file that claims more is not a document
+MAX_PARAGRAPHS = 60_000           # paragraphs read from one Word file; a file with more is refused, whatever it weighs
+MAX_XML_NODES = 400_000           # elements of one Word file's document.xml outside any paragraph's own text
+MAX_PDF_PAGES = 2_000             # pages read from one PDF
+MAX_PDF_SECONDS = 60.0            # and how long reading it may take
 MAX_SECTION_CHARS = 6000          # a section longer than this is split at paragraph ends, so one pull stays small
 TEXT_EXT = {"md", "markdown", "txt", "text", "csv", "tsv", "py", "sql", "sh", "ps1", "js", "json", "yaml", "yml", "ini", "cfg", "log", "rst"}
 SCRIPT_EXT = {"py", "sql", "sh", "ps1", "js"}
@@ -35,23 +39,56 @@ def _docx_blocks(body: bytes) -> list[tuple[int, str]]:
     """(heading level or 0, text) per paragraph of a Word file, read from word/document.xml: no dependency."""
     from xml.etree import ElementTree as ET
     W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    class _Capped:
+        """The unzipped stream, which stops at the limit whatever the zip's header claimed."""
+        def __init__(self, f): self.f, self.n = f, 0
+
+        def read(self, size=-1):
+            b = self.f.read(65536 if size is None or size < 0 else min(size, 65536))
+            self.n += len(b)
+            if self.n > MAX_UNZIPPED:
+                raise OverflowError("the Word file is too large once opened")
+            return b
+    out: list[tuple[int, str]] = []
     with zipfile.ZipFile(io.BytesIO(body)) as z:
         if z.getinfo("word/document.xml").file_size > MAX_UNZIPPED:           # looked at before anything is unzipped
             raise OverflowError("the Word file is too large once opened")
         with z.open("word/document.xml") as f:
-            xml = f.read(MAX_UNZIPPED + 1)                                    # and the read itself stops there, whatever the header claimed
-        if len(xml) > MAX_UNZIPPED:
-            raise OverflowError("the Word file is too large once opened")
-        root = ET.fromstring(xml)
-    out = []
-    for p in root.iter(W + "p"):
-        text = "".join(t.text or "" for t in p.iter(W + "t")).strip()
-        if not text:
-            continue
-        style = p.find(f"{W}pPr/{W}pStyle")
-        sv = (style.get(W + "val") if style is not None else "") or ""
-        m = re.match(r"(?i)heading\s*([1-6])", sv)
-        out.append((int(m.group(1)) if m else (1 if sv.lower() == "title" else 0), text))
+            # Read as it streams, paragraph by paragraph, and let each one go once its text is taken: the whole tree of
+            # a 40 MB document.xml is hundreds of MB in memory (security review 2026-11-24, M3). Nothing is kept but
+            # the text; a file with more paragraphs or more structure than a document has is refused.
+            stack: list = []
+            inside = nodes = paragraphs = 0
+            for ev, el in ET.iterparse(_Capped(f), events=("start", "end")):
+                if ev == "start":
+                    stack.append(el)
+                    if el.tag == W + "p":
+                        inside += 1
+                    continue
+                stack.pop()
+                if el.tag == W + "p":
+                    inside -= 1
+                    if inside == 0:
+                        paragraphs += 1
+                        if paragraphs > MAX_PARAGRAPHS:
+                            raise OverflowError(f"the Word file has more than {MAX_PARAGRAPHS:,} paragraphs")
+                        text = "".join(t.text or "" for t in el.iter(W + "t")).strip()
+                        if text:
+                            style = el.find(f"{W}pPr/{W}pStyle")
+                            sv = (style.get(W + "val") if style is not None else "") or ""
+                            m = re.match(r"(?i)heading\s*([1-6])", sv)
+                            out.append((int(m.group(1)) if m else (1 if sv.lower() == "title" else 0), text))
+                if inside == 0:                       # outside a paragraph nothing is needed again: let it go, and its place in its parent
+                    el.clear()
+                    if stack:
+                        try:
+                            stack[-1].remove(el)
+                        except ValueError:
+                            pass
+                nodes += 1
+                if nodes > MAX_XML_NODES + 40 * max(paragraphs, 1):
+                    raise OverflowError("the Word file has more structure than a document does")
     return out
 
 
@@ -60,9 +97,17 @@ def _pdf_text(body: bytes) -> tuple[str, str | None]:
         from pypdf import PdfReader
     except ImportError:
         return "", "PDF reading needs the pypdf package on the server"
+    import time
+    t0 = time.monotonic()
     try:
         reader = PdfReader(io.BytesIO(body))
-        pages = [(pg.extract_text() or "").strip() for pg in reader.pages]
+        if len(reader.pages) > MAX_PDF_PAGES:
+            return "", f"this PDF has {len(reader.pages):,} pages: a document may have up to {MAX_PDF_PAGES:,}"
+        pages = []
+        for pg in reader.pages:                        # a page at a time, so a file built to be slow stops at the limit, not at its end
+            pages.append((pg.extract_text() or "").strip())
+            if time.monotonic() - t0 > MAX_PDF_SECONDS:
+                return "", f"this PDF took more than {int(MAX_PDF_SECONDS)} seconds to read and was left: split it, or upload it as text"
     except Exception as e:
         return "", f"could not read the PDF: {type(e).__name__}"
     text = "\n\n".join(f"## Page {i + 1}\n\n{t}" for i, t in enumerate(pages) if t)
@@ -234,13 +279,44 @@ def object_index(estate_run) -> list[tuple[str, str, str, re.Pattern]]:
     return out
 
 
+_TOKEN = re.compile(r"\w+")
+
+
+class Linker:
+    """The object index with a way in by word. Trying every pattern on every section is one regex search per object
+    per section: three thousand line items and a long document are minutes (security review 2026-11-24, H2). A name
+    can only be in a text that holds every word of the name, so each object is filed under its rarest word, a section
+    is looked up by the words it has, and only the few objects that could be there are tried with their own pattern.
+    The answer is the same as trying them all, in the same order."""
+
+    def __init__(self, index):
+        self.index = list(index)
+        self.words = [frozenset(_TOKEN.findall(ref.lower())) for _m, _k, ref, _p in self.index]
+        freq: dict[str, int] = {}
+        for ws in self.words:
+            for w in ws:
+                freq[w] = freq.get(w, 0) + 1
+        self.by_word: dict[str, list[int]] = {}
+        self.always: list[int] = []
+        for i, ws in enumerate(self.words):
+            if not ws:
+                self.always.append(i)                 # a name with no word in it: tried every time
+            else:
+                self.by_word.setdefault(min(ws, key=lambda w: (freq[w], w)), []).append(i)
+
+    def __len__(self): return len(self.index)
+    def __iter__(self): return iter(self.index)
+
+    def links(self, text: str) -> list[tuple[str, str, str]]:
+        have = set(_TOKEN.findall(text.lower()))
+        cand = set(self.always)
+        for w in have & self.by_word.keys():
+            cand.update(i for i in self.by_word[w] if self.words[i] <= have)
+        return [(self.index[i][0], self.index[i][1], self.index[i][2]) for i in sorted(cand) if self.index[i][3].search(text)]
+
+
 def link_objects(text: str, index) -> list[tuple[str, str, str]]:
-    low = text
-    hits = []
-    for model, kind, ref, pat in index:
-        if pat.search(low):
-            hits.append((model, kind, ref))
-    return hits
+    return (index if isinstance(index, Linker) else Linker(index)).links(text)
 
 
 # ---------- the store ----------
@@ -309,9 +385,14 @@ def add(db: Db, eid: str, filename: str, body: bytes, estate_run=None, by: str |
             s = (summarise(title, "\n\n".join((x["heading"] + "\n" if x["heading"] else "") + x["text"] for x in sections)[:12000]) or "").strip()
             if s:
                 summary, summary_by = s[:600], "model"
-        except Exception:
+        except Exception as e:
+            if type(e).__name__ == "SpendNotRecorded":  # a model call that could not be put on the ledger is not used
+                raise
             pass                                        # the card still has its opening sentences
-    index = object_index(estate_run) if estate_run is not None else []
+    # Everything that takes time is done before the store is written: reading, splitting, the summary, and which
+    # objects each section names. The transaction is the inserts and nothing else, so nobody else's write waits on it.
+    linker = Linker(object_index(estate_run) if estate_run is not None else [])
+    linked = [linker.links(s["heading"] + "\n" + s["text"]) for s in sections]
     did = doc_id or "d-" + secrets.token_hex(5)
     prev = db.one("SELECT * FROM documents WHERE id=? AND estate_id=?", replaces, eid) if replaces else None
     with db.tx():
@@ -325,20 +406,22 @@ def add(db: Db, eid: str, filename: str, body: bytes, estate_run=None, by: str |
             sid = section_id(did, i)
             db.run("INSERT INTO doc_sections(id, document_id, seq, heading, level, text, tokens) VALUES (?,?,?,?,?,?,?)", sid, did, i, s["heading"][:200], s["level"],
                    s["text"], tokens_of(s["heading"] + s["text"]))
-            for model, kind, ref in link_objects(s["heading"] + "\n" + s["text"], index):
+            for model, kind, ref in linked[i]:
                 db.run("INSERT OR IGNORE INTO doc_section_objects(section_id, model, kind, ref) VALUES (?,?,?,?)", sid, model, kind, ref)
     return get(db, did)
 
 
 def relink(db: Db, eid: str, estate_run) -> int:
     """After a new snapshot is activated: the object links are read again against the estate as it is now."""
-    index = object_index(estate_run)
+    linker = Linker(object_index(estate_run))
+    found = [(s["id"], linker.links(s["heading"] + "\n" + s["text"]))            # worked out first: the transaction below only writes
+             for s in db.q("SELECT s.id, s.heading, s.text FROM doc_sections s JOIN documents d ON d.id=s.document_id WHERE d.estate_id=?", eid)]
     n = 0
     with db.tx():
-        for s in db.q("SELECT s.id, s.heading, s.text FROM doc_sections s JOIN documents d ON d.id=s.document_id WHERE d.estate_id=?", eid):
-            db.run("DELETE FROM doc_section_objects WHERE section_id=?", s["id"])
-            for model, kind, ref in link_objects(s["heading"] + "\n" + s["text"], index):
-                db.run("INSERT OR IGNORE INTO doc_section_objects(section_id, model, kind, ref) VALUES (?,?,?,?)", s["id"], model, kind, ref); n += 1
+        for sid, links in found:
+            db.run("DELETE FROM doc_section_objects WHERE section_id=?", sid)
+            for model, kind, ref in links:
+                db.run("INSERT OR IGNORE INTO doc_section_objects(section_id, model, kind, ref) VALUES (?,?,?,?)", sid, model, kind, ref); n += 1
     return n
 
 

@@ -28,7 +28,7 @@ EDITED = """## Brief
 
 ## What does it read?
 
-- The revenue and cost of sales of the same module, nothing outside it."""
+- It reads the revenue and the cost of sales of the same module, and nothing outside it."""
 
 
 class Scripted:

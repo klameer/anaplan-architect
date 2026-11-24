@@ -8,6 +8,7 @@ import { api, ago, plain } from '../api'
 import { href, useApp, type View } from '../App'
 import { Icon } from '../views/Answer'
 import logoUrl from '../design/brand/logo.svg'
+import { GuideWelcome } from '../views/Guide'
 
 const NAV: [View, string, string][] = [
   ['home', 'Workspace', 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z'],
@@ -67,10 +68,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span className="grow"><div className="n">{cur?.name || summary?.name || 'Choose a workspace'}</div><div className="s">{cur ? `${cur.models.length} model${cur.models.length !== 1 ? 's' : ''}${(summary as any)?.documents != null && summary?.id === eid ? ` · ${(summary as any).documents} document${(summary as any).documents !== 1 ? 's' : ''}` : ''}` : `${live.length} workspace${live.length !== 1 ? 's' : ''}`}</div></span>
             <Icon d="M8 10l4-4 4 4M8 14l4 4 4-4" s={14} /></button>
           {open && <div className="pop" role="listbox"><div className="k" style={{ padding: '4px 8px 6px' }}>Workspaces</div>
-            {live.map(w => <a key={w.id} href={href(w.id, 'home')} className={'row' + (w.id === eid ? ' on' : '')} role="option" aria-selected={w.id === eid}><span className="tick">{w.id === eid ? '✓' : ''}</span><span className="grow"><div className="n">{w.name}</div><div className="s">{w.models.length} model{w.models.length !== 1 ? 's' : ''}{w.snapshot ? '' : ' · nothing uploaded yet'}</div></span>{bin(w)}</a>)}
+            {live.map(w => <a key={w.id} href={href(w.id, 'home')} className={'row' + (w.id === eid ? ' on' : '')} role="option" aria-selected={w.id === eid}><span className="tick">{w.id === eid ? '✓' : ''}</span><span className="grow"><div className="n">{w.name}</div><div className="s">{w.models.length} model{w.models.length !== 1 ? 's' : ''}{w.snapshot ? '' : ' · nothing uploaded yet'}{me?.user ? (w.visibility === 'shared' ? ` · shared with ${w.team}${w.mine ? '' : ', by ' + w.created_by_name}` : ' · private') : ''}</div></span>{me?.user && w.visibility === 'shared' && <span className="ds-tag sky" data-access="shared">shared</span>}{(w.mine !== false || me?.user?.role === 'owner') && bin(w)}</a>)}
             {archived.length > 0 && <><div className="k" style={{ padding: '8px 8px 4px' }}>Archived</div>{archived.map(w => <a key={w.id} href={href(w.id, 'home')} className="row"><span className="tick" /><span className="grow"><div className="n dim">{w.name}</div></span>{bin(w)}</a>)}</>}
             <a className="add" href="#/new">+ New workspace</a>
-            <div className="iso">A workspace is separate: its chats, documents, notes and dependencies stay in it. Nothing is remembered across workspaces.</div></div>}
+            <div className="iso">A workspace is separate: its chats, documents, notes and dependencies stay in it. Nothing is remembered across workspaces. Private is yours alone; shared is open to your team and nobody else.</div></div>}
         </div>
         <nav className="ds-nav">{NAV.map(([v, label, d]) => <a key={v} href={eid ? href(eid, v) : '#/new'} className={(route.view === v || (v === 'chats' && route.view === 'chat') || (v === 'home' && (route.view === 'size' || route.view === 'dependencies'))) && eid ? 'on' : ''}><Icon d={d} />{label}
           {v === 'notes' && (summary?.notes_flagged || 0) > 0 ? <span className="ct" style={{ color: 'var(--amber)' }} title="Notes whose cited evidence moved since the last upload">{summary!.notes_flagged} to review</span> : counts[v] ? <span className="ct">{counts[v]}</span> : null}</a>)}</nav>
@@ -86,11 +87,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="ds-who"><span className="av">{(me?.user?.name || 'L').slice(0, 1).toUpperCase()}</span>
           <div style={{ flex: 1, minWidth: 0 }}><div className="t">{me?.user ? me.user.name : 'Local'}</div><div className="s">{me?.user ? (me.user.role === 'owner' ? 'admin' : 'member') : 'no accounts'}</div></div>
           {me?.user?.role === 'owner' && <a href="#/admin" className={route.view === 'admin' ? '' : 'dim'} style={{ fontSize: 12 }}>Admin</a>}
+          <a href="#/guide" className={route.view === 'guide' ? '' : 'dim'} style={{ fontSize: 12 }} title="Getting started: what each screen is for, and what to ask first">Guide</a>
           <a href="#/settings" className={route.view === 'settings' ? '' : 'dim'} style={{ fontSize: 12 }}>Settings</a>
           {me?.user && <button className="x2" onClick={signOut} title="Sign out">↪</button>}</div>
       </aside>
       <main className="ds-main">
-        <div className="ds-top"><span className="crumb"><b>{summary?.name || (route.view === 'settings' ? 'Settings' : route.view === 'admin' ? 'Admin' : route.view === 'new' ? 'New workspace' : '')}</b>{summary?.snapshot && <> · read {summary.snapshot.activated_at?.slice(0, 10)}</>}</span><span className="grow" />
+        <GuideWelcome />
+        <div className="ds-top"><span className="crumb"><b>{summary?.name || (route.view === 'settings' ? 'Settings' : route.view === 'guide' ? 'Getting started' : route.view === 'admin' ? 'Admin' : route.view === 'new' ? 'New workspace' : '')}</b>{summary?.snapshot && <> · read {summary.snapshot.activated_at?.slice(0, 10)}</>}</span><span className="grow" />
           {summary && <span className="mono dim" style={{ fontSize: 11 }}>{summary.llm ? `${summary.provider} · ${summary.model}` : 'no model key'}</span>}</div>
         {children}
       </main>

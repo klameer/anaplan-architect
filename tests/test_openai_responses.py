@@ -38,7 +38,7 @@ def test_a_question_with_tools_goes_over_the_responses_api_and_comes_back_in_the
     sent = inner.responses.calls[0]
     assert sent["stream"] is True and sent["store"] is False and sent["reasoning"] == {"effort": "medium"}
     assert sent["tools"][0] == {"type": "function", "name": "query_line_items", "description": "count", "parameters": TOOLS[0]["input_schema"]}
-    assert "max_output_tokens" not in sent and "messages" not in sent          # no cut-off on a reasoning model; not the chat shape
+    assert sent["max_output_tokens"] == 32000 and "messages" not in sent       # a limit four times the answer's, so reasoning cannot cut it short; not the chat shape
     assert deltas == ["Looking. "] and msg.stop_reason == "tool_use"
     assert [b.type for b in msg.content] == ["text", "tool_use"] and msg.content[1].input == {"model": "FP&A"} and msg.content[1].id == "call_1"
     assert (msg.usage.input_tokens, msg.usage.cache_read_input_tokens, msg.usage.output_tokens) == (100, 20, 30)

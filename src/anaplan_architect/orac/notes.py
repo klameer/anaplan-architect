@@ -286,11 +286,15 @@ def search(db: Db, eid: str, text: str, model_id: str | None = None, module: str
 
 
 def siblings(db: Db, nid: str) -> list[dict]:
-    """Other current notes that share an object with this one: where disagreements live."""
+    """Other current notes of the same workspace that share an object with this one: where disagreements live.
+    Of the same workspace, said in the query: a rule scope carries no model, so the same rule id in another
+    workspace would otherwise match (security review 2026-11-24, H1)."""
     rows = db.q("SELECT DISTINCT n.id, n.title, n.type, n.status, n.updated, substr(n.body, 1, 200) AS body FROM note_objects a "
+                "JOIN notes me ON me.id=a.note_id "
                 "JOIN note_objects b ON b.scope=a.scope AND COALESCE(b.model_id,'')=COALESCE(a.model_id,'') AND COALESCE(b.module,'')=COALESCE(a.module,'') "
                 "AND COALESCE(b.line_item,'')=COALESCE(a.line_item,'') AND COALESCE(b.rule,'')=COALESCE(a.rule,'') "
-                "JOIN notes n ON n.id=b.note_id WHERE a.note_id=? AND b.note_id<>? AND n.status<>'superseded' AND a.scope<>'estate' ORDER BY n.updated DESC", nid, nid)
+                "JOIN notes n ON n.id=b.note_id AND n.estate_id=me.estate_id "
+                "WHERE a.note_id=? AND b.note_id<>? AND n.status<>'superseded' AND a.scope<>'estate' ORDER BY n.updated DESC", nid, nid)
     return rows
 
 

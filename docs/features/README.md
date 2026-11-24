@@ -4,6 +4,7 @@ One page per feature. Each says what it does, how to use it, and how it is built
 
 | Page | What it covers |
 |---|---|
+| [The getting-started guide](getting-started-guide.md) | The guide a new login is offered once, and the same guide as one file to send or print |
 | [Workspaces and logins](workspaces-and-logins.md) | A workspace as an isolated unit, memberships, sign-in, the demo workspaces, deleting a workspace |
 | [Documents](documents.md) | Project documents as cards and sections, search, quotes and how they are checked |
 | [The line-item index](line-item-index.md) | Exact counts and filters over every line item of every model |

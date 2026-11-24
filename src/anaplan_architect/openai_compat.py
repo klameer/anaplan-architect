@@ -119,7 +119,7 @@ class ResponsesClient:
     endpoint keeps chat completions, which is what OpenAI-compatible servers implement. The request and the event stream
     are the ones the Codex route already translates (codex.to_responses, codex._Stream)."""
     def __init__(self, model: str, inner=None, api_key: str | None = None, base_url: str | None = None, reasoning_effort: str | None = "medium"):
-        self.model = model; self.messages = self; self.effort = reasoning_effort
+        self.model = model; self.messages = self; self.effort = reasoning_effort; self.send_limit = True
         if inner is None:
             import openai
             inner = openai.OpenAI(base_url=base_url or None, api_key=api_key or "not-needed")
@@ -135,12 +135,24 @@ class ResponsesClient:
             rk["tools"] = rtools; rk["tool_choice"] = "auto"
         if self.effort and self.effort != "default":
             rk["reasoning"] = {"effort": self.effort}
-        # no output limit is sent: on a reasoning model it would count the reasoning too and cut answers short
+        # An output limit is sent, so one call cannot run on without end at the login's cost. On a reasoning model the
+        # limit counts the reasoning too, so it is sized well above the answer: four times what the answer may be, and
+        # never under 16,000 (OPENAI_MAX_OUTPUT_TOKENS sets it outright; 0 sends none).
+        import os
+        try:
+            limit = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS") or max(16000, 4 * int(max_tokens or 0)))
+        except ValueError:
+            limit = max(16000, 4 * int(max_tokens or 0))
+        if limit > 0 and self.send_limit:
+            rk["max_output_tokens"] = limit
         try:
             raw = self.inner.responses.create(**rk, stream=True)
         except Exception as e:
             if "reasoning" in rk and "reasoning" in str(e):          # a model that does not reason refuses the setting
                 rk.pop("reasoning"); self.effort = None
+                raw = self.inner.responses.create(**rk, stream=True)
+            elif "max_output_tokens" in rk and "max_output_tokens" in str(e):      # an endpoint that does not know the limit
+                rk.pop("max_output_tokens"); self.send_limit = False
                 raw = self.inner.responses.create(**rk, stream=True)
             else:
                 raise

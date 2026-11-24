@@ -172,7 +172,7 @@ def test_one_trace_per_conversation_with_turns_under_its_root():
         t.validator({"cited": 1, "clean": True}, {"unverified": []}); t.scores({"cited": 1, "clean": True, "skipped": None}); t.output("hi")
     root, turn1, llm, tool, verify = ls.created
     # the conversation is the root run, named by its title, and its place is what the next turn is handed
-    assert root["name"] == "The estate" and root["run_type"] == "chain" and "parent_run_id" not in root and root["trace_id"] == root["id"]
+    assert root["name"] == "conversation" and "The estate" not in repr(root) and root["run_type"] == "chain" and "parent_run_id" not in root and root["trace_id"] == root["id"]
     assert root["project_name"] == "proj" and root["extra"]["metadata"] == {"estate": "e1", "thread_id": "c-1", "session_id": "c-1", "user_id": "karim"}
     assert kept["s"] == {"trace_id": str(root["id"]), "root_run_id": str(root["id"]), "root_dotted_order": root["dotted_order"], "host": "stub", "project": "proj"}
     # the turn hangs off the root; the model call, the tool and the validator hang off the turn, in the order they happened
@@ -250,7 +250,7 @@ def test_the_session_traces_to_langsmith_and_the_store_keeps_the_root(tmp_path):
     assert c.post(f"/api/conversations/{cid}/messages", json={"text": "what divides?"}).status_code == 200
     assert c.post(f"/api/conversations/{cid}/messages", json={"text": "and again?"}).status_code == 200
     roots = [r for r in ls.created if "parent_run_id" not in r]
-    assert len(roots) == 1 and roots[0]["name"] == "traced" and roots[0]["extra"]["metadata"]["thread_id"] == cid
+    assert len(roots) == 1 and roots[0]["name"] == "conversation" and "traced" not in repr(roots[0]) and roots[0]["extra"]["metadata"]["thread_id"] == cid
     turn1, turn2 = ls.children(roots[0]["id"])
     assert turn1["name"] == "what divides?" and turn2["name"] == "and again?" and turn1["extra"]["metadata"]["estate"] == eid
     kids = ls.children(turn1["id"])
@@ -297,12 +297,13 @@ def test_content_is_off_by_default_and_a_trace_then_carries_structure_only(monke
     a, b = record(off), record(on)
     sent = repr(a.calls)
     assert not [w for w in SECRETS if w in sent], [w for w in SECRETS if w in sent]              # nothing a user wrote or a workspace holds
-    assert all(w in repr(b.calls) for w in SECRETS)                                               # with content on, it is all there
+    assert all(w in repr(b.calls) for w in SECRETS if w != "Opex review chat")                    # with content on, it is all there
+    assert "Opex review chat" not in repr(b.calls)                                                # but for the chat's title: that is whoever started the chat's, and is never sent
     # the structure is the same either way: the same runs, of the same types, in the same order, with the same parents
     kinds = lambda ls: [(r["run_type"], "parent_run_id" in r) for r in ls.created]
     assert kinds(a) == kinds(b) and len(a.created) == 6 and len(a.calls) == len(b.calls)
     root, turn, llm, search, getobj, verify = a.created
-    assert (root["name"], turn["name"]) == ("conversation", "turn 2") and b.created[0]["name"] == "Opex review chat"
+    assert (root["name"], turn["name"]) == ("conversation", "turn 2") and b.created[0]["name"] == "conversation"
     assert [r["name"] for r in a.created[2:]] == ["model", "search_documents", "get_object", "verify"]          # tool names and their order stay
     assert "tags" not in turn and b.created[1]["tags"] == ["Caldergate FP&A"]
     # sizes in place of content

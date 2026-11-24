@@ -6,6 +6,7 @@ import { href, useApp } from '../App'
 import { Inline, Markdown } from '../objects'
 import { Icon, TurnView } from './Answer'
 import { NoteEditor, type Draft } from './Knowledge'
+import { AccessNote } from './Access'
 
 export function Chat({ cid }: { cid: string }) {
   const { route, summary, idx, refresh, go, toast } = useApp()
@@ -146,7 +147,7 @@ export function Chat({ cid }: { cid: string }) {
       {/* the end of the chat is brought into view above the composer, which sticks to the bottom and would otherwise cover it */}
       <div ref={box} style={{ scrollMarginBottom: 190 }} />
     </div>
-    <div className="ds-compose"><div className="box">
+    <div className="ds-compose"><AccessNote a={(summary as any)?.access?.visibility === 'shared' ? (summary as any).access : null} /><div className="box">
       <textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={held ? 'Choose above how to go on before asking again.' : 'Follow up… the chat remembers (Enter sends, Shift+Enter for a new line)'} disabled={!!pending || held} rows={2}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(draft) } }} />
       <div className="row">

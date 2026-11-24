@@ -18,19 +18,26 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# the two pinned libraries: local wheels when they were built, else the GitHub tags
+# the two pinned libraries: local wheels when they were built, else the GitHub commits. What they pull in is held to
+# constraints.txt like everything else (security review 2026-11-24: this step used to resolve without it).
+COPY constraints.txt ./
 COPY vendor* /wheels/
-RUN if ls /wheels/*.whl >/dev/null 2>&1; then pip install /wheels/*.whl; \
-    else pip install "git+https://github.com/klameer/anaplan-grammar@${GRAMMAR_REF}" "git+https://github.com/klameer/anaplan-estate@${ESTATE_REF}"; fi
+RUN if ls /wheels/*.whl >/dev/null 2>&1; then pip install -c constraints.txt /wheels/*.whl; \
+    else pip install -c constraints.txt "git+https://github.com/klameer/anaplan-grammar@${GRAMMAR_REF}" "git+https://github.com/klameer/anaplan-estate@${ESTATE_REF}"; fi
 
-COPY pyproject.toml README.md constraints.txt LICENSE* CITATION.cff* ./
+COPY pyproject.toml README.md LICENSE* CITATION.cff* ./
 COPY src ./src
 COPY examples ./examples
 # every other dependency at the version the tests ran against (constraints.txt)
 RUN pip install -c constraints.txt ".[llm,web,openai,trace]"
 
 RUN useradd --create-home --uid 10001 architect && mkdir -p /data && chown architect /data
-USER architect
+# No USER line: the container starts as root for one step (docker-entrypoint.sh makes the mounted volume the app's own)
+# and the entrypoint then drops to uid 10001 for good, so the server never runs as root, on Railway included, and
+# RAILWAY_RUN_UID=0 is not needed. Started with --user it runs as that user from the first instruction.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # No VOLUME line: Railway refuses a Dockerfile that has one. docker-compose.yml declares the /data volume;
 # with plain docker run, pass -v yourvolume:/data or the store is lost with the container.
 EXPOSE 8765

@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, json } from '../api'
 
-export type Doomed = { id: string; name: string; models: number; documents?: number; chats?: number; notes?: number }
+export type Doomed = { id: string; name: string; models: number; documents?: number; chats?: number; notes?: number; team?: string | null; members?: string[] }
 const n = (k: number | undefined, one: string, many = one + 's') => `${k ?? 0} ${k === 1 ? one : many}`
 
 export function DeleteWorkspace({ ws, onClose, onDone, toast }: { ws: Doomed; onClose: () => void; onDone: () => void | Promise<void>; toast: (m: string) => void }) {
@@ -29,6 +29,7 @@ export function DeleteWorkspace({ ws, onClose, onDone, toast }: { ws: Doomed; on
         <div className="nm">{ws.name}</div>
         <div className="what"><div className="k">What goes with it</div>
           <ul><li>{n(ws.models, 'model')} and every export uploaded for {ws.models === 1 ? 'it' : 'them'}</li><li>{n(ws.documents, 'document')}</li><li>{n(ws.chats, 'chat')}, with their answers</li><li>{n(ws.notes, 'note')}</li><li>its decisions and dependencies</li></ul>
+          {ws.team && <div className="warn" data-loses={ws.team}>It is shared with {ws.team}{ws.members && ws.members.length ? `: ${ws.members.join(', ')} ${ws.members.length === 1 ? 'loses' : 'lose'} it too` : ''}. Everything they asked and added in it goes with it.</div>}
           <div className="warn">There is no undo. Download a backup from the workspace's settings first if you may want it back.</div></div>
         <label htmlFor="del-name">Type the workspace's name to confirm</label>
         <input id="del-name" ref={box} className="ds-in" value={typed} placeholder={ws.name} autoComplete="off" onChange={e => setTyped(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') del() }} />

@@ -25,8 +25,9 @@ import { Auth } from './views/Auth'
 import { Settings } from './views/Settings'
 import { EvidencePanel } from './views/Evidence'
 import { DesignSheet } from './design/Sheet'
+import { Guide } from './views/Guide'
 
-export type View = 'home' | 'chats' | 'chat' | 'dependencies' | 'plan' | 'size' | 'notes' | 'new' | 'settings' | 'design' | 'documents' | 'admin' | 'missing'
+export type View = 'home' | 'chats' | 'chat' | 'dependencies' | 'plan' | 'size' | 'notes' | 'new' | 'settings' | 'design' | 'documents' | 'admin' | 'guide' | 'missing'
 /** `args`: the segments after the view, decoded (the explorer's selection: model, then object). */
 export type Route = { eid: string | null; view: View; cid: string | null; args: string[] }
 
@@ -38,6 +39,7 @@ export function parseHash(h: string): Route {
   if (p[0] === 'design') return { eid: null, view: 'design', cid: null, args: p.slice(1) }      // the v0.2 design sheet (docs/DESIGN.md), its own shell
   if (p[0] === 'admin') return { eid: null, view: 'admin', cid: null, args: [] }
   if (p[0] === 'settings') return { eid: null, view: 'settings', cid: null, args: [] }
+  if (p[0] === 'guide') return { eid: null, view: 'guide', cid: null, args: p.slice(1) }          // getting started: open to every login
   if (p[0] === 'e' && p[1]) {
     const v = (p[2] || 'home') as View
     if (v === 'chat') return { eid: p[1], view: 'chat', cid: p[3] || null, args: [] }
@@ -152,6 +154,7 @@ export function App() {
   const old = (node: React.ReactNode) => <div className="page" key={route.eid || route.view}>{node}</div>
   if (route.view === 'missing') main = <div className="ds-col"><BertNote state="question" place="not-found" title="Nothing at this address">There is no page called "{route.args[0]}". <a href={route.eid ? href(route.eid, 'home') : '#/'} style={{ color: 'var(--accent)' }}>{route.eid ? 'Back to the workspace' : 'Go to your workspaces'}</a>.</BertNote></div>
   else if (route.view === 'settings') main = <Settings />
+  else if (route.view === 'guide') main = <Guide />
   else if (route.view === 'admin') main = <AdminPage />
   else if (route.view === 'new' || !route.eid) main = old(<NewEstate />)
   else if (!summary) main = loading

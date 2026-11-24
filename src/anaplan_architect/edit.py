@@ -2,7 +2,10 @@
 
 The editor may only cut. That is not left to its word: `refused` compares the edit with the draft and throws the edit
 away when it holds a name, a citation id, a figure or a quoted passage the draft did not, when it has lost a citation
-the lead rests on, or when it is not shorter. The validator then checks whichever text stands, as it always did.
+the lead rests on, or when it is not shorter. And, since the security review of 2026-11-24 (M4): when any sentence,
+bullet, heading or table row of the edit is not in the draft word for word, or when it holds a link or an address the
+draft did not. A shorter text is not a cut text: an edit could drop ten sentences and add one of its own. The
+validator then checks whichever text stands, as it always did.
 """
 from __future__ import annotations
 import re
@@ -28,13 +31,14 @@ SYSTEM = """You are the editor of an answer an Anaplan architect has drafted for
 Return the draft cut down to what the reader needs to decide and act, in the same markdown.
 
 - `## Brief` stays first: at most three sentences that carry the answer and the next step.
-- After it, at most three short sections under `##` headings. Turn paragraphs into bullets of one line each. Drop a section that only describes.
+- After it, at most three short sections, under headings the draft already has. A paragraph may become bullets, one of its sentences to a bullet. Drop a section that only describes.
+- You cut by removing whole sentences, bullets, table rows and sections. Every sentence and heading you keep stays word for word as the draft has it: do not shorten, join, reword or re-title.
 - Remove everything that repeats what the page already draws beside the answer (you are told what that is). Remove repetition, hedging, preamble and summary.
 - Keep at most two quoted passages, the ones the answer rests on.
 - Aim for at most {target} words outside quoted passages.
 
 What you must not do, and it is checked by code, which throws your edit away if you do:
-- add anything: no new claim, name, figure, quote or id;
+- add anything: no new claim, name, figure, quote, id, heading, link or address, and no sentence that is not in the draft word for word;
 - change a single character inside double quotes: keep a quoted passage exactly as it is with its id straight after it, or remove the quote and its id together;
 - change a name in backticks;
 - remove a citation the Brief rests on, a question the draft asks the owner, a warning, or a line saying that documents disagree or that something is not recorded.
@@ -99,7 +103,60 @@ def refused(draft: str, edited: str) -> str | None:
         return "the edit dropped a citation the lead rests on: " + ", ".join(sorted(lost)[:3])
     if re.search(r"not\s+recorded", draft[:600], re.I) and not re.search(r"not\s+recorded", e[:600], re.I):
         return "the edit lost the words Not recorded"
+    fd_all = _flat(draft).lower()
+    for u in _URL.findall(e):
+        if _flat(u).lower().rstrip(".,;)") not in fd_all:
+            return "the edit holds a link or an address the draft did not: " + u[:60]
+    # An edit is the draft with whole units taken out: nothing else. Its units, in its order, must be units of the
+    # draft, in the draft's order, each exactly as the draft has it. A substring test is not that: it let the head of a
+    # sentence be cut ("It is not safe to remove X" to "safe to remove X"), fragments be joined into a new claim, a
+    # heading be made of a fragment and a word be struck through (security review 2026-11-24, third pass).
+    have = _units(draft)
+    i = 0
+    for unit in _units(e):
+        while i < len(have) and have[i] != unit:
+            i += 1
+        if i == len(have):
+            what = {"h": "a heading", "r": "a table row"}.get(unit[0], "a sentence")
+            return f"the edit holds {what} the draft did not, or not there: " + unit[1][:80]
+        i += 1
     return None
+
+
+_URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]{1,12}://|www\.|mailto:)[^\s)>\]]+|\]\(\s*[^)\s]+\s*\)|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|example|co|uk|ai|info|biz|ru|cn|xyz|top|link|site|online|me|zip|mov)\b(?:/[^\s)]*)?")
+_ID_IN_TEXT = re.compile(r"\(?`?\b(?:[sn]-[0-9a-f]{10}|c[0-9a-f]{10})\b`?\)?")
+_BULLET = re.compile(r"^\s*(?:[-+*•]|\d{1,2}[.)])\s+")
+_RULE = re.compile(r"\s*(?:\|?[\s:|-]+\|[\s:|-]*|[-*_]{3,})\s*")
+
+
+def _same(text: str) -> str:
+    """A unit as it is compared: its characters as they are, marks included (a struck-through or commented-out word is
+    a different sentence), one space between words, lower case, straight quotes."""
+    return re.sub(r"\s+", " ", (text or "").replace("“", '"').replace("”", '"').replace("’", "'")).strip().lower()
+
+
+def _units(text: str) -> list[tuple[str, str]]:
+    """The units of a text, in order: ("h", heading), ("r", table row), ("t", sentence or bullet). A sentence ends at a
+    full stop, a question mark or an exclamation mark (not at a colon or a semicolon: what follows one is the same
+    sentence), or at a citation id, which closes what it stands behind and is checked on its own. A bullet's or a
+    number's mark at the head of a line is not part of the unit, so a paragraph may become bullets. Empty lines and
+    rule lines are nothing; a line of symbols only is a unit like any other."""
+    units: list[tuple[str, str]] = []
+    for ln in (text or "").split("\n"):
+        if not ln.strip() or _RULE.fullmatch(ln):
+            continue
+        if re.match(r"\s*#{1,6}\s", ln):
+            units.append(("h", _same(ln.lstrip().lstrip("#"))))
+            continue
+        if ln.lstrip().startswith("|"):
+            units.append(("r", _same(ln)))
+            continue
+        ln = _ID_IN_TEXT.sub("\n", _BULLET.sub("", ln))
+        for sent in re.sub(r"([.!?][\"”'’)\]`*_]*)\s+", "\\1\n", ln.strip()).split("\n"):
+            p = _same(sent)
+            if p:
+                units.append(("t", p))
+    return units
 
 
 def request(question: str, kind: str, draft: str) -> str:

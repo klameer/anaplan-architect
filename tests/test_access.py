@@ -314,11 +314,15 @@ def test_a_restore_cannot_reach_into_another_logins_workspace(two):
     for what, z in bad.items():
         r = restore(z)
         assert r.status_code == 400 and "not part of this backup" in r.json()["detail"], (what, r.status_code, r.text[:200])
-        assert db.one("SELECT COUNT(*) AS n FROM estates WHERE id=?", aid)["n"] == 0, what                    # refused whole: nothing of it was written
+        assert db.one("SELECT COUNT(*) AS n FROM estates")["n"] == 1 and alice.get("/api/estates").json() == [], what       # refused whole: nothing of it was written
     assert db.one("SELECT COUNT(*) AS n FROM notes WHERE estate_id=?", bid)["n"] == 0 and db.one("SELECT COUNT(*) AS n FROM conversations WHERE snapshot_id=?", bsid)["n"] == 0
     # the untouched backup restores, and its chat still opens
-    assert restore(good).status_code == 200 and alice.get(f"/api/conversations/{conv['id']}").status_code == 200
-    # inspecting a backup that claims another login's workspace id says the id is taken, never whose it is or what it is called
+    back = restore(good)
+    assert back.status_code == 200 and alice.get(f"/api/conversations/{conv['id']}").status_code == 404          # every id is made again
+    aid = back.json()["id"]
+    conv = {"id": alice.get(f"/api/estates/{aid}/conversations").json()[0]["id"]}
+    assert alice.get(f"/api/conversations/{conv['id']}").status_code == 200
+    # inspecting a backup that claims another login's workspace id says nothing about it; restoring it makes a workspace of alice's own
     claims = _tamper(good, "estates", lambda r: [dict(r[0], id=bid)])
     import io as _io, zipfile as _zf
     buf = _io.BytesIO()
@@ -326,9 +330,9 @@ def test_a_restore_cannot_reach_into_another_logins_workspace(two):
         for n in src.namelist():
             z.writestr(n, json.dumps(dict(json.loads(src.read(n)), estate_id=bid)) if n == "manifest.json" else src.read(n))
     seen = alice.post("/api/estates/restore/inspect", files={"file": ("e.zip", buf.getvalue(), "application/zip")})
-    assert seen.status_code == 200 and "Bob's models" not in seen.text and seen.json()["conflict"] == {"id": bid}
+    assert seen.status_code == 200 and "Bob's models" not in seen.text and not seen.json()["conflict"]
     r = restore(buf.getvalue())
-    assert r.status_code in (400, 409) and "Bob's models" not in r.text
+    assert r.status_code == 400 and "Bob's models" not in r.text and bob.get(f"/api/estates/{bid}").json()["name"] == "Bob's models"          # its rows do not agree with each other
     # defence in depth: rows as a restore before this fix could have left them
     calls = model.calls
     db.run("INSERT INTO conversations(id, estate_id, title, snapshot_id, author_id, created, updated) SELECT 'c-planted0001', ?, 'planted', ?, author_id, created, updated FROM conversations WHERE id=?", aid, bsid, conv["id"])
@@ -397,3 +401,191 @@ def test_a_note_cannot_borrow_a_citation_or_a_model_from_another_workspace(two):
     # in her own workspace both still work
     mine = alice.post(f"/api/estates/{aid}/notes", json={"body": "mine", "sources": [cite], "objects": [{"scope": "model", "model_id": amodel}]}).json()
     assert [s["id"] for s in mine["sources_resolved"]] == [cite] and mine["objects"][0]["model"] == "Alice Secret Model"
+
+
+# ---------- workspace sharing (Karim, 2026-11-24): Private, or Shared with the creator's team ----------
+@pytest.fixture()
+def teams(tmp_path):
+    """alice and carol are in Acme, bob is in Birch, dave has no team, erin was in Acme and has been moved out."""
+    model = Model()
+    app = create_app(tmp_path / "data", client_factory=lambda: model)
+    auth.create_owner(app.state.db, app.state.workspace_id, "admin", "Admin", "correct horse battery")
+    admin = _login(app, "admin", "correct horse battery")
+    who = {}
+    made = set()
+    for name, team in (("alice", "Acme"), ("carol", "Acme"), ("bob", "Birch"), ("dave", None), ("erin", "Acme")):
+        r = admin.post("/api/admin/users", json={"username": name, "name": name.title(), "demo": False, **({"team" if team in made else "new_team": team} if team else {})}).json()
+        made.add(team)
+        who[name] = (_login(app, name, r["password"]), r["user"]["id"])
+    assert admin.patch(f"/api/admin/users/{who['erin'][1]}", json={"team": None}).status_code == 200
+    return app, admin, who, model
+
+
+def _shared(c, name):
+    li = (FX / "1 Caldergate Planning" / "Line Items.csv").read_bytes()
+    r = c.post("/api/estates", data={"name": name, "model_names": ["Caldergate Planning"], "visibility": "shared"}, files=[("line_items", ("Line Items.csv", li, "text/csv"))])
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+GUARD_404 = {"detail": "nothing here by that id"}
+
+
+def test_a_shared_workspace_is_the_teams_and_a_private_one_is_its_makers_over_every_route(teams):
+    app, admin, who, model = teams
+    alice, carol, bob, dave, erin = (who[n][0] for n in ("alice", "carol", "bob", "dave", "erin"))
+    sid_, pid_ = _shared(alice, "Acme shared"), _workspace(alice, "Alice private")
+
+    def fill(eid):
+        conv = alice.post(f"/api/estates/{eid}/conversations", json={"title": "q", "text": "what is margin %?"}).json()
+        doc = alice.post(f"/api/estates/{eid}/documents", files=[("files", ("note.md", b"# Note\n\nCAL04 Margin is the margin module.", "text/markdown"))]).json()["documents"][0]
+        note = alice.post(f"/api/estates/{eid}/notes", json={"title": "n", "body": "a note", "scopes": ["estate"]}).json()
+        s = alice.get(f"/api/estates/{eid}").json()
+        return ({"eid": eid, "cid": conv["id"], "sid": s["snapshot"]["id"], "mid": s["models"][0]["id"], "nid": note["id"], "did": doc["id"], "tid": conv["turns"][0]["id"],
+                 "uid": "u-none", "pid": "p-none"}, next(x["id"] for x in conv["turns"][0]["citations"]))
+    S, P = fill(sid_), fill(pid_)
+    # what each login lists
+    ids = lambda c: {e["id"] for e in c.get("/api/estates").json()}
+    assert ids(alice) == {sid_, pid_} and ids(carol) == {sid_} and ids(bob) == set() and ids(dave) == set() and ids(erin) == set() and ids(admin) == set()
+    row = next(e for e in carol.get("/api/estates").json() if e["id"] == sid_)
+    assert row["visibility"] == "shared" and row["team"] == "Acme" and row["mine"] is False and row["created_by_name"] == "Alice"
+
+    def walk(client, ids_, cite, expect_denied, methods=None):
+        n = 0
+        for route in app.routes:
+            path = getattr(route, "path", "")
+            if not path.startswith("/api/") or "{" not in path or path.startswith("/api/admin/"):
+                continue
+            url = path
+            for p in re.findall(r"\{(\w+)\}", path):
+                url = url.replace("{" + p + "}", cite if path.startswith("/api/citations/") else ids_.get(p, "x"))
+            for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+                if methods and method not in methods:
+                    continue
+                r = client.request(method, url, json={}) if method in ("POST", "PUT", "PATCH", "DELETE") else client.request(method, url)
+                denied = r.status_code == 404 and r.headers.get("content-type", "").startswith("application/json") and r.json() == GUARD_404
+                assert denied == expect_denied, f"{method} {path} answered {r.status_code} {r.text[:80]}"
+                n += 1
+        return n
+    # denied, on every route and every method: another team, no team, an ex-team-mate, and the admin, on both; a team-mate on the private one
+    for name, c in (("bob", bob), ("dave", dave), ("erin", erin)):
+        assert walk(c, S[0], S[1], True) >= 60 and walk(c, P[0], P[1], True) >= 60, name
+    assert walk(carol, P[0], P[1], True) >= 60
+    assert admin.get(f"/api/estates/{sid_}").status_code == 404 and admin.get(f"/api/conversations/{S[0]['cid']}").status_code == 404        # counts, never content
+    # allowed: a team-mate reads everything of the shared one (every GET route), and it was not touched by all the refusals
+    assert walk(carol, S[0], S[1], False, methods={"GET"}) >= 25
+    after = alice.get(f"/api/estates/{sid_}").json()
+    assert after["name"] == "Acme shared" and len(after["conversations"]) == 1 and after["documents"] == 1
+    # and works in it: asks in alice's chat, starts one, adds a note and a document
+    assert carol.post(f"/api/conversations/{S[0]['cid']}/messages", json={"text": "and why?"}).status_code == 200
+    assert carol.post(f"/api/estates/{sid_}/conversations", json={"title": "c", "text": "carol asks"}).status_code == 200
+    assert carol.post(f"/api/estates/{sid_}/notes", json={"title": "carol's", "body": "from carol", "scopes": ["estate"]}).status_code == 200
+    assert carol.post(f"/api/estates/{sid_}/documents", files=[("files", ("c.md", b"# C\n\nCarol's file.", "text/markdown"))]).status_code == 200
+    # each chat says who asked, each note and document who added it
+    conv = alice.get(f"/api/conversations/{S[0]['cid']}").json()
+    assert [t["by_name"] for t in conv["turns"]] == ["Alice", "Carol"]
+    heads = {h["title"]: h["author_name"] for h in alice.get(f"/api/estates/{sid_}/conversations").json()}
+    assert heads == {"q": "Alice", "c": "Carol"}
+    assert {n["title"]: n["author_name"] for n in alice.get(f"/api/estates/{sid_}/notes").json()} == {"n": "Alice", "carol's": "Carol"}
+    assert {d["filename"]: d["uploaded_by_name"] for d in alice.get(f"/api/estates/{sid_}/documents").json()["documents"]} == {"note.md": "Alice", "c.md": "Carol"}
+    # spend is each login's own
+    spent = lambda n: app.state.db.one("SELECT COUNT(*) AS n FROM spend WHERE user_id=?", who[n][1])["n"]
+    assert spent("carol") == 4 and spent("alice") == 4
+
+
+def test_who_may_share_unshare_and_delete_and_who_loses_access(teams):
+    app, admin, who, model = teams
+    alice, carol, bob, dave, erin = (who[n][0] for n in ("alice", "carol", "bob", "dave", "erin"))
+    eid = _workspace(alice, "Plan")
+    a = alice.get(f"/api/estates/{eid}").json()["access"]
+    assert a == {"visibility": "private", "team": None, "creator": "Alice", "mine": True, "can_change": True, "can_share": True, "share_locked": None, "my_team": "Acme", "members": ["Alice"],
+                 "chats": "Only you can see the chats, documents and notes of this workspace."}
+    assert carol.get(f"/api/estates/{eid}").status_code == 404
+    # the maker shares it with her team: the team is in at once
+    r = alice.patch(f"/api/estates/{eid}", json={"visibility": "shared"})
+    a = r.json()["access"]
+    assert r.status_code == 200 and a["visibility"] == "shared" and a["team"] == "Acme" and a["members"] == ["Alice", "Carol"]
+    assert "Everyone in Acme" in a["chats"] and "who asked" in a["chats"]
+    assert carol.get(f"/api/estates/{eid}").status_code == 200 and carol.get(f"/api/estates/{eid}").json()["access"]["can_change"] is False
+    # a team-mate can neither make it private nor delete it; the maker and the admin can
+    assert carol.patch(f"/api/estates/{eid}", json={"visibility": "private"}).status_code == 403
+    r = carol.request("DELETE", f"/api/estates/{eid}", json={"confirm": "Plan"})
+    assert r.status_code == 403 and "Alice" in r.json()["detail"]
+    assert carol.patch(f"/api/estates/{eid}", json={"name": "Plan v2"}).status_code == 403            # using it is not owning it: its name is its maker's
+    # a login moved out of the team loses it at once, and one put in gains it; what they added stays
+    assert carol.post(f"/api/estates/{eid}/notes", json={"title": "kept", "body": "carol's note", "scopes": ["estate"]}).status_code == 200
+    assert admin.patch(f"/api/admin/users/{who['carol'][1]}", json={"team": "Birch"}).json()["user"]["team"] == "Birch"
+    assert carol.get(f"/api/estates/{eid}").status_code == 404 and bob.get(f"/api/estates/{eid}").status_code == 404
+    assert "kept" in [n["title"] for n in alice.get(f"/api/estates/{eid}/notes").json()]
+    assert admin.patch(f"/api/admin/users/{who['erin'][1]}", json={"team": "Acme"}).status_code == 200 and erin.get(f"/api/estates/{eid}").status_code == 200
+    # a disabled login is out too
+    assert admin.patch(f"/api/admin/users/{who['erin'][1]}", json={"disabled": True}).status_code == 200 and erin.get(f"/api/estates/{eid}").status_code == 401
+    # the admin makes it private again (from the admin panel, never by opening it): the team is out, the maker stays
+    assert admin.patch(f"/api/admin/users/{who['carol'][1]}", json={"team": "Acme"}).status_code == 200 and carol.get(f"/api/estates/{eid}").status_code == 200
+    rows = admin.get("/api/admin/workspaces").json()["workspaces"]
+    row = next(w for w in rows if w["id"] == eid)
+    assert row["visibility"] == "shared" and row["team"] == "Acme" and "content" not in row and admin.get(f"/api/estates/{eid}").status_code == 404
+    assert admin.patch(f"/api/admin/workspaces/{eid}", json={"visibility": "private"}).json()["visibility"] == "private"
+    assert carol.get(f"/api/estates/{eid}").status_code == 404 and alice.get(f"/api/estates/{eid}").status_code == 200
+    # a login with no team has no Shared option, at creation or after
+    d = _workspace(dave, "Dave's")
+    acc = dave.get(f"/api/estates/{d}").json()["access"]
+    assert acc["can_share"] is False and acc["my_team"] is None
+    r = dave.patch(f"/api/estates/{d}", json={"visibility": "shared"})
+    assert r.status_code == 400 and "team" in r.json()["detail"]
+    li = (FX / "1 Caldergate Planning" / "Line Items.csv").read_bytes()
+    r = dave.post("/api/estates", data={"name": "x", "model_names": ["Caldergate Planning"], "visibility": "shared"}, files=[("line_items", ("Line Items.csv", li, "text/csv"))])
+    assert r.status_code == 400 and len(dave.get("/api/estates").json()) == 1
+    # me says which team, and the admin's list of teams counts
+    assert alice.get("/api/auth/me").json()["user"]["team"] == "Acme" and dave.get("/api/auth/me").json()["user"]["team"] is None
+    t = {x["name"]: x for x in admin.get("/api/admin/teams").json()["teams"]}
+    assert t["Acme"]["logins"] == 3 and t["Birch"]["logins"] == 1
+    assert bob.get("/api/admin/teams").status_code == 403
+
+
+def test_a_backup_is_not_a_way_round_and_an_old_store_comes_up_private(teams, tmp_path):
+    app, admin, who, model = teams
+    alice, carol, bob = (who[n][0] for n in ("alice", "carol", "bob"))
+    eid = _shared(alice, "Acme shared")
+    assert carol.get(f"/api/estates/{eid}/backup").status_code == 403                                   # a whole copy is its maker's to take
+    z = alice.get(f"/api/estates/{eid}/backup")
+    assert z.status_code == 200 and bob.get(f"/api/estates/{eid}/backup").status_code == 404
+    assert alice.request("DELETE", f"/api/estates/{eid}", json={"confirm": "Acme shared"}).status_code == 200
+    # carol restores it: it comes back hers and Private, whatever the archive said; her team does not get it by the back door
+    r = carol.post("/api/estates/restore", files={"file": ("b.zip", z.content, "application/zip")})
+    assert r.status_code == 200, r.text
+    assert r.json()["access"]["visibility"] == "private" and r.json()["access"]["mine"] is True
+    new = r.json()["id"]
+    assert new != eid and alice.get(f"/api/estates/{new}").status_code == 404 and carol.get(f"/api/estates/{new}").status_code == 200 and carol.get(f"/api/estates/{eid}").status_code == 404
+    # the archive carries no team
+    import io, zipfile, json as _json
+    est = _json.loads(zipfile.ZipFile(io.BytesIO(z.content)).read("tables/estates.json"))[0]
+    assert est.get("team_id") in (None, "") and est.get("visibility", "private") == "private"
+    # a store from before this: every workspace private, every login without a team
+    db = app.state.db
+    assert db.one("SELECT COUNT(*) AS n FROM estates WHERE visibility NOT IN ('private','shared')")["n"] == 0
+    cols = {r["name"]: r for r in db.q("PRAGMA table_info(estates)")}
+    assert cols["visibility"]["dflt_value"].strip("'") == "private" and "team_id" in {r["name"] for r in db.q("PRAGMA table_info(users)")}
+    assert db.version >= 15
+
+
+def test_one_members_tracing_choice_never_sends_another_members_question(teams, monkeypatch):
+    """Tracing consent is each login's own, also inside a shared workspace and inside one shared chat."""
+    app, admin, who, model = teams
+    alice, carol = who["alice"][0], who["carol"][0]
+    sent = []
+
+    class Spy:
+        enabled = True; ceiling = "content"; client = object()
+        def status(self): return {"enabled": True}
+        def turn(self, name, **kw):
+            sent.append((kw.get("user_id"), kw.get("level")))
+            from anaplan_architect.orac import telemetry
+            return telemetry.Tracer(None).turn(name, **kw)
+    app.state.tracer = Spy()
+    eid = _shared(alice, "Acme shared")
+    assert alice.put("/api/prefs", json={"trace_level": "content"}).status_code == 200
+    cid = alice.post(f"/api/estates/{eid}/conversations", json={"title": "q", "text": "what is margin %?"}).json()["id"]
+    assert carol.post(f"/api/conversations/{cid}/messages", json={"text": "carol asks in alice's chat"}).status_code == 200
+    by = {uid: lvl for uid, lvl in sent}
+    assert by.get(who["alice"][1]) == "content" and who["carol"][1] not in by            # carol's turn went to no outside tracer at all

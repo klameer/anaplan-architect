@@ -442,6 +442,94 @@ docker compose up --build
 - **Limited**: the questions come from a fixed set per kind of answer, filled with the object the answer was about.
   They do not react to what the answer said.
 
+## 30. Private and Shared workspaces
+
+- **Needs**: a store with logins. As the admin, open Admin and give two logins the same **Team** (the *Team* button
+  on each row, or the *Team* box when creating a login). A team is a company.
+- **Do** (as the first login): New workspace. Under *Who can see it* choose **Shared with <team>**, upload exports,
+  *Parse and open*.
+- **See**: under the workspace's name, *shared · <team>*, *Everyone in <team> can open it: <names>. Made by you.*
+  and a **Make private…** button. Open the switcher: that workspace says *shared with <team>*; the others *private*.
+- **Do** (as the second login): the workspace is in their switcher, *shared with <team>, by <the first>*. Open a chat
+  the first login started.
+- **See**: each answer says *asked by <name>*. Above the chat box: *Everyone in <team> can read and add to the chats,
+  documents and notes of this workspace. Each one shows who asked or added it.* Ask a follow-up: it counts against
+  the second login's cap, not the first's.
+- **See**: the second login has no *Make private* and no delete: *Only <the first> or the admin can change this or
+  delete it.*
+- **Do** (as the first login): **Make private…**. The dialog lists who loses access. Confirm.
+- **See**: the second login gets *Nothing at this address* for that workspace at once. Their follow-up is still in
+  the chat, for the first login.
+- **Do** (as the admin): Admin shows a **Team** column, and for each workspace *private* or *shared · <team>* with a
+  *Make private* button. Opening a workspace the admin is not a member of still answers *Nothing at this address*.
+- **Also true**: a login with no team sees Shared greyed out with the reason; a restored backup always comes back
+  private to whoever restored it.
+- **Check**: `python tools/sharing_check.py --password <the capture store's admin> --ask` does all of this in a real
+  browser with the two demo logins and takes the stills. 14 checks passed.
+
+## 34. What the third pass changed (2026-11-24)
+
+- **Do**: download a backup of a workspace and restore it without deleting anything.
+- **See**: a second workspace beside the first, private, yours. Its chats open; the chips in their answers open.
+- **Do**: as the maker of a shared workspace a colleague has added to, take a backup, restore it, and try to share
+  the copy.
+- **See**: the copy says it cannot be shared and why. As the admin, *Workspaces*, **Allow sharing** lifts that.
+- **Do**: as the admin, *Teams*: type a name that reads like one already there (Acrne beside Acme).
+- **See**: you are asked whether it is a different company before it is made.
+- **Do**: as the admin, open *Settings* on a hosted instance.
+- **See**: *Your address, as counted* says where the address is read from, or that it is not set and sign-in is
+  limited by name alone.
+- **Do**: while an answer is being written in a shared chat, have a colleague add a document and ask in the same chat.
+- **See**: the colleague is told the chat is still answering. Afterwards the turns are in the order they were asked.
+
+## 33. What the second review changed (2026-11-24)
+
+- **Do**: upload exports in which a module is named `[x](#" onmouseover="alert(1))`, and open *the report* from the
+  workspace page.
+- **See**: the name is shown as text. Hovering it does nothing. The page cannot read the app's cookie or call the app.
+- **Do**: in a workspace with a large model, upload a long document while someone else writes a note.
+- **See**: the document is read in seconds and the note is saved at once.
+- **Do**: ask a question and close the tab while the answer is being written. Ask again straight away.
+- **See**: the second question is answered (the first no longer holds the chat), and the first is on the spend ledger.
+- **Do**: sign in wrongly five times, then with the right password.
+- **See**: refused for fifteen minutes from that address. The same login from another address gets in, a little slower.
+- **Do**: as the admin, open *Settings*.
+- **See**: *Your address, as counted*: it should be your own address.
+- **Do**: ask for an answer that carries a link to another site.
+- **See**: the link is followed by *(goes to that-site ↗)* and opens in a tab of its own.
+- **Limited**: the Docker user change has not been built; which header Railway's edge sets is not established.
+
+## 32. What the sharing review changed (2026-11-24)
+
+- **Do**: as the admin, open *Admin*. Under *Teams*, type a company's name and press **New team**. Type it again in
+  capitals.
+- **See**: the team is made once; the second time it is refused, with the name it already has.
+- **Do**: pick that team for two logins from the list in the *Team* column. Try it on your own admin login.
+- **See**: the two logins are in the team. The admin's row says *none: admin* and has no list.
+- **Do**: as the first login, share a workspace. As the second, try to rename it, delete the first one's chat, and
+  download a backup.
+- **See**: each is refused with who can do it. The second login can still ask, add, and remove what they added.
+- **Do**: as the admin, move the first login (the maker) to no team.
+- **See**: the confirm says the workspace stays with the team. The maker no longer has it. In *Workspaces* its row
+  reads *no maker: name one…*; pick the second login. They are its maker now.
+- **Do**: download a backup of a workspace, delete the workspace, restore the file.
+- **See**: it comes back under a new id, private, everything in it under your name.
+- **Limited**: a backup of a workspace that is still here cannot be restored beside it.
+
+## 31. The getting-started guide
+
+- **Do**: sign in as a login that has never opened the app.
+- **See**: a card at the top, *New here?*, with **Open the guide** and **Not now**. Either one, and it does not come
+  back. *Guide*, beside Settings, is always there.
+- **Do**: open the guide.
+- **See**: fourteen steps, from *Sign in* to *Who to ask*. Twelve screens from the Caldergate demo, each with two or
+  three numbered arrows and the same numbers as a list under it. *Ask a question* lists the eight showcase questions.
+- **Do**: open `docs/onboarding/getting-started.html` straight from the folder, offline.
+- **See**: the same guide, in one file. Narrow the window to a phone's width: it still reads, nothing scrolls sideways.
+- **Regenerate**: `python tools/guide.py --password <the capture store's admin>`. It names any callout whose element
+  is no longer on the page and writes nothing until every arrow has something to point at.
+- **Limited**: where to find each export in Anaplan is said in words, not shown.
+
 ## How each entry was run
 
 | Entry | How it was run |
@@ -451,6 +539,11 @@ docker compose up --build
 | 3 | the page opened in the browser; the upload itself only through the route it posts to (tests) |
 | 16 | not re-checked beyond the pages opening |
 | 17, 18 | `tools/ui_check.py` (sign-in, admin panel); creating a login through `tools/walkthrough_check.py`, not the form |
+| 34 | `tests/test_review_third.py`, each run against the unfixed commit first (12 of 12 failed); the third reviewer's own edit-guard script run again (every hostile edit refused, the honest one accepted); not clicked through in a browser |
+| 33 | `tests/test_review_delta.py` and `tests/test_review_delta2.py`, each run against the unfixed commit first (11 of 11 failed); the report page, an outside link and the Settings line in a real browser on a throwaway store; `tools/load_check.py` with a 1 MB document into a 3,000 line item model (0.9 s; a note written meanwhile 0.26 s at most); the whole suite again in a clean Python 3.12 environment built from `constraints.txt` |
+| 32 | `tests/test_review_sharing.py`, one test per finding, each run against the unfixed code first (14 of 14 failed); not clicked through in a browser yet |
+| 31 | `tools/guide.py --ask` on the capture store (14 sections, 12 screens, 30 callouts); the file opened in a real browser at 1100 and 390 wide, no outside request made; the card and the page clicked through as a demo login; `tests/test_guide.py` |
+| 30 | `tools/sharing_check.py --ask` on the capture store (14 checks, 12 stills); `tests/test_access.py` walks every route as a team-mate, another team, no team, an ex-team-mate and the admin |
 | 29 | a question asked on a fresh store, the page opened in a real browser, the three questions read off it and the first one clicked: it was asked in the same chat; `tests/test_followups.py` |
 | 28 | `tools/demo.py run --set showcase` on a fresh store (8 of 8 clean), then on the capture store with `tools/captures.py --showcase --only showcase`; `tests/test_doclinks.py` |
 | 27 | `tools/demo.py run --set showcase --only plan improve` on a fresh store (both clean; the plan has one slot, three departures and one as-per flag); `tests/test_planual.py` |

@@ -11,7 +11,31 @@ export const SANITIZE = {
 }
 
 export function sanitize(html: string): string {
-  return DOMPurify.sanitize(html, SANITIZE) as unknown as string
+  return outside(DOMPurify.sanitize(html, SANITIZE) as unknown as string)
+}
+
+// A link in an answer can be one the model was steered into writing by text it read. It stays a link, but it never
+// passes for part of the app: the site it goes to is written beside it, it opens in a tab of its own, and it tells
+// that site nothing about where it came from (security review 2026-11-24).
+function outside(html: string): string {
+  if (!/<a\b/i.test(html)) return html
+  const t = document.createElement('template')
+  t.innerHTML = html
+  t.content.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href') || ''
+    if (href.startsWith('#')) return
+    let host = ''
+    try { const u = new URL(href, location.href); host = u.origin === location.origin ? '' : (u.host || u.protocol.replace(':', '')) } catch { host = 'an address that could not be read' }
+    if (!host) return
+    a.setAttribute('rel', 'noopener noreferrer nofollow')
+    a.setAttribute('target', '_blank')
+    a.setAttribute('data-outside', host)
+    const s = document.createElement('span')
+    s.className = 'ext-host'
+    s.textContent = ` (goes to ${host} ↗)`
+    a.after(s)
+  })
+  return t.innerHTML
 }
 
 // for tools/ui_check.py, which asks a real browser what survives

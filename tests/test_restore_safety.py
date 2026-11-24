@@ -7,7 +7,10 @@ from anaplan_architect.orac.blobs import BlobStore
 from anaplan_architect.orac import backup, estates as reg
 
 
-def _archive(path, estate_id="e-1", extra=()):
+EID = "20260929-100000-abcd"
+
+
+def _archive(path, estate_id=EID, extra=()):
     tables = {"estates": [{"id": estate_id, "workspace_id": "x", "name": "E", "created_by": None, "created": "2026-09-29T10:00:00", "archived": 0}]}
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("manifest.json", json.dumps({"kind": backup.KIND, "format": backup.FORMAT, "estate_id": estate_id, "name": "E", "counts": {}}))
@@ -24,10 +27,18 @@ def test_restore_refuses_paths_and_ids_that_leave_the_estate_folder(tmp_path):
     evil = _archive(tmp_path / "evil.zip", extra=[("architect/transcripts/../../../../escaped.txt", "x"), ("architect\\..\\..\\escaped2.txt", "x")])
     with pytest.raises(ValueError, match="leave its folder"):
         backup.import_estate(db, blobs, data, evil, ws)
-    assert not list(tmp_path.rglob("escaped*.txt")) and reg.get_estate(db, "e-1") is None
-    with pytest.raises(ValueError, match="not a plain id"):
-        backup.import_estate(db, blobs, data, _archive(tmp_path / "badid.zip", estate_id="../../outside"), ws)
+    assert not list(tmp_path.rglob("escaped*.txt")) and reg.get_estate(db, EID) is None and db.one("SELECT COUNT(*) AS n FROM estates")["n"] == 0
+    for bad in ("../../outside", "e-1", EID.upper(), EID + ".", "CON", "create"):
+        with pytest.raises(ValueError, match="not in the shape"):
+            backup.import_estate(db, blobs, data, _archive(tmp_path / "badid.zip", estate_id=bad), ws)
     assert not (tmp_path / "outside").exists() and not (tmp_path / "estates").exists()
+    for name in ("architect/transcripts/NUL.jsonl", "architect/transcripts/c-1.jsonl.", "architect/transcripts/c:1.jsonl", "architect/con/x.jsonl"):
+        with pytest.raises(ValueError, match="leave its folder"):
+            backup.import_estate(db, blobs, data, _archive(tmp_path / "odd.zip", extra=[(name, "x")]), ws)
     ok = _archive(tmp_path / "ok.zip", extra=[("architect/transcripts/c-1.jsonl", "{}")])
     r = backup.import_estate(db, blobs, data, ok, ws)
-    assert r["id"] == "e-1" and (data / "estates" / "e-1" / ".architect" / "transcripts" / "c-1.jsonl").exists()
+    # the workspace's id, and so its folder, is the server's: never the one the archive names (security review 2026-11-24, M2)
+    assert r["id"] != EID and reg.get_estate(db, EID) is None and not (data / "estates" / EID).exists()
+    assert (data / "estates" / r["id"] / ".architect" / "transcripts" / "c-1.jsonl").exists()
+    r2 = backup.import_estate(db, blobs, data, ok, ws)
+    assert r2["id"] not in (EID, r["id"]) and len(list((data / "estates").iterdir())) == 2

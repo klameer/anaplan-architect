@@ -51,3 +51,19 @@ def test_the_answer_carries_them_and_they_name_only_what_the_answer_was_about(tm
     assert c.get(f"/api/conversations/{cid}").json()["turns"][0]["blocks"][-1]["type"] == "followups"
     # no model call was spent on them
     assert t["run"]["model_calls"] == 2
+
+
+def test_an_answer_that_names_a_real_object_without_looking_it_up_still_gets_its_next_questions():
+    """Found making the guide: a why-answer that rested on documents named `CAL03 Opex.Forecast Opex` without any tool
+    handing it, so it had no cited object and was given no next questions at all. A name the answer uses that the
+    workspace really has is a subject too; and with no object at all an answer still offers where to go next."""
+    cited = [{"kind": "document", "ref": "s-0123456789"}, {"kind": "model", "ref": "Caldergate FP&A"}]
+    real = [{"kind": "line_item", "ref": "CAL03 Opex.Forecast Opex", "model": "Caldergate FP&A"}, {"kind": "module", "ref": "CAL03 Opex", "model": "Caldergate FP&A"}]
+    text = "## Brief\n\nThe mapping in `CAL03 Opex.Forecast Opex` was deliberate."
+    assert followups.subject_of([], cited, text) is None
+    s = followups.subject_of([], cited, text, named=real)
+    assert s == {"kind": "line_item", "ref": "CAL03 Opex.Forecast Opex", "model": "Caldergate FP&A"}
+    assert [x["text"] for x in followups.suggest("why", s)][0] == "How is CAL03 Opex.Forecast Opex calculated?"
+    for kind in followups.KINDS:
+        assert followups.suggest(kind, None), kind                         # never nothing
+    assert followups.suggest("why", None, not_recorded=True)

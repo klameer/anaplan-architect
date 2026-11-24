@@ -231,8 +231,8 @@ def test_budget_cuts_a_result_and_concise_mode_is_carried(tmp_path, monkeypatch)
     assert item["tokens"] <= 900 and any("the rest of the result" in x["label"] for x in t["context"]["left_out"])
     assert "Answer mode: concise" in json.dumps(model.seen[0]["messages"][-1]["content"])
     # the default mode is a preference, kept for the machine when there are no accounts
-    assert c.get("/api/prefs").json() == {"answer_mode": "full", "edit_pass": True}
-    assert c.put("/api/prefs", json={"answer_mode": "concise"}).json() == {"answer_mode": "concise", "edit_pass": True}
+    assert c.get("/api/prefs").json() == {"answer_mode": "full", "edit_pass": True, "guide_seen": False}
+    assert c.put("/api/prefs", json={"answer_mode": "concise"}).json() == {"answer_mode": "concise", "edit_pass": True, "guide_seen": False}
     model.steps = [lambda r: "## Brief\n\nShort."]
     t2 = c.post(f"/api/conversations/{conv['id']}/messages", json={"text": "and again"}).json()
     assert t2["mode"] == "concise"
@@ -265,13 +265,21 @@ def test_a_backup_carries_the_documents_and_a_restored_answer_still_opens_its_se
     r = c.post("/api/estates/restore", files={"file": ("e.zip", z, "application/zip")})
     assert r.status_code == 200, r.text
     assert r.json()["restore"]["counts"]["documents"] == 1 and r.json()["restore"]["counts"]["doc_sections"] == n_sec
+    was, eid = eid, r.json()["id"]                  # every id is made again by the server: the workspace's, the document's, each section's, each citation's
+    assert eid != was
     after = c.get(f"/api/estates/{eid}/documents").json()
-    strip = lambda d: json.dumps(d, sort_keys=True)
+    import re as _re
+    strip = lambda d: _re.sub(r"\b[ds]-[0-9a-f]{10}\b", "ID", json.dumps(d, sort_keys=True).replace(eid, was))
     assert strip(after) == strip(before) and count("doc_sections", "") == n_sec and count("doc_section_objects", "") == n_obj
-    assert c.get(f"/api/estates/{eid}/documents/search", params={"q": "zero denominator guard"}).json()["hits"][0]["section"] == sec       # the full-text index is back too
-    ev = c.get(f"/api/citations/{cite['id']}")
+    assert after["documents"][0]["id"] != before["documents"][0]["id"]
+    sec2 = c.get(f"/api/estates/{eid}/documents/search", params={"q": "zero denominator guard"}).json()["hits"][0]["section"]              # the full-text index is back too
+    assert sec2 != sec and docsmod.get_section(db, sec2, eid)["heading"] == "2 Margin logic" and docsmod.get_section(db, sec, eid) is None
+    conv2 = c.get(f"/api/conversations/{c.get(f'/api/estates/{eid}/conversations').json()[0]['id']}").json()
+    cite2 = next(x for x in conv2["turns"][0]["citations"] if x["kind"] == "document")
+    assert cite2["id"] != cite["id"] and cite2["ref"] == sec2 and sec2 in conv2["turns"][0]["a"] and sec not in conv2["turns"][0]["a"]      # the answer names the section by its new id
+    ev = c.get(f"/api/citations/{cite2['id']}")
     assert ev.status_code == 200 and "zero denominator" in json.dumps(ev.json())                                                      # the cited section opens
-    assert docsmod.get_section(db, sec, eid)["heading"] == "2 Margin logic"
+    assert c.get(f"/api/citations/{cite['id']}").status_code == 404
 
 
 def test_an_upload_does_not_stall_everyone_else(tmp_path, monkeypatch):
@@ -419,13 +427,13 @@ def test_a_broken_or_hostile_pdf_is_refused_with_a_reason_never_an_error(tmp_pat
 
 def test_the_report_page_runs_its_own_script_and_still_reaches_nothing(tmp_path):
     """The deterministic report is one self-contained page with its own inline script. Under the app's policy that
-    script would be refused, so the report carries a policy of its own: its inline script and styles, images only as
-    data, and no request to anywhere at all, the app included."""
+    script would be refused, so the report carries a policy of its own: its one script by its hash (no other inline
+    script, no event handler), inline styles, images only as data, no origin, and no request to anywhere at all."""
     c = TestClient(create_app(tmp_path / "data", client_factory=lambda: None))
     li = (FX / "1 Caldergate Planning" / "Line Items.csv").read_bytes()
     eid = c.post("/api/estates", data={"name": "R", "model_names": ["Caldergate Planning"]}, files=[("line_items", ("Line Items.csv", li, "text/csv"))]).json()["id"]
     r = c.get(f"/api/estates/{eid}/report")
     csp = r.headers["content-security-policy"]
     assert r.status_code == 200 and "<script" in r.text
-    assert "default-src 'none'" in csp and "script-src 'unsafe-inline'" in csp and "connect-src" not in csp and "img-src data:" in csp and "http" not in csp
+    assert "default-src 'none'" in csp and "script-src 'sha256-" in csp and "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0] and "sandbox allow-scripts" in csp and "connect-src" not in csp and "img-src data:" in csp and "http" not in csp
     assert "script-src 'self'" in c.get("/").headers["content-security-policy"]          # the app's own policy is unchanged

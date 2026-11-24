@@ -6,6 +6,7 @@ out
 tests
 docs
 tools
+!docker-entrypoint.sh
 *.pyc
 __pycache__
 .env

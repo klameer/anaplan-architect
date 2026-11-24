@@ -55,6 +55,10 @@ The admin is created once, on first start. The admin creates every other login f
 | `ARCHITECT_MAX_CHATS_PER_LOGIN` | Answers one login may have in flight at once (default 2) |
 | `ARCHITECT_MAX_CHATS` | Answers in flight on the whole instance (default 16) |
 | `ARCHITECT_MAX_EXPORT_READS` | Sets of exports read at once (default 2); `ARCHITECT_EXPORT_WAIT_S` is how long an upload waits for a turn (default 20) |
+| `ARCHITECT_MAX_DOCUMENT_READS` | Batches of documents read at once (default 2). `ARCHITECT_MAX_RESTORES`: backups restored at once (default 1). A login has one of each kind at a time |
+| `ARCHITECT_MAX_STORAGE_MB_PER_LOGIN` | The export files one login's workspaces may hold on the volume (default 2000) |
+| `ARCHITECT_CLIENT_ADDRESS` | Hosted mode: where the caller's address is read from for the sign-in limits. `x-real-ip`, `xff:1` (the rightmost entry of X-Forwarded-For), `xff:2`, or `peer`. **Unset by default: no header is believed and sign-in is limited by name alone** (five wrong passwords and the name waits fifteen minutes, whoever tries). Set it only to a header your proxy writes itself and replaces when a caller sends one. Check it: the admin's Settings shows the address your own request is counted under |
+| `ARCHITECT_PRICE_IN`, `ARCHITECT_PRICE_OUT`, `ARCHITECT_PRICE_CACHED` | USD per million tokens for a model that is not Claude, when the built-in table is wrong or has no price for it |
 | `ARCHITECT_THREADS` | Worker threads (default 64) |
 
 Model settings are on [Model providers](model-providers.md); tracing on [Tracing](tracing.md).
@@ -104,7 +108,8 @@ up to thirty seconds. More people than this is a bigger machine, not more replic
 
 - One instance only: the store is a single SQLite file.
 - Nothing is encrypted at rest. Whoever has the volume reads everything.
-- The image has been built and run from the public repository (2026-11-14): on your own machine it is healthy in about six seconds with both demo workspaces, runs as a non-root user and holds about 86 MB at rest; in hosted mode with a volume, sign-in, Secure cookies, the security headers and a restart that keeps logins and sessions were checked. Not yet tried: a question with a real model key inside the container, and `docker compose up` itself (the image was started with `docker run`).
+- The image has been built and run from the public repository (2026-11-14): on your own machine it is healthy in about six seconds with both demo workspaces, ran as a non-root user (with `docker run`, no mounted volume of root's) and holds about 86 MB at rest; in hosted mode with a volume, sign-in, Secure cookies, the security headers and a restart that keeps logins and sessions were checked. Not yet tried: a question with a real model key inside the container, and `docker compose up` itself (the image was started with `docker run`).
+- **The user the server runs as.** On Railway the mounted volume belongs to root, so the service was run with `RAILWAY_RUN_UID=0` and the server was root. Since 2026-11-24 the image has an entrypoint (`docker-entrypoint.sh`) that starts as root, makes the data folder the app's own, and drops to uid 10001 before the server starts; `RAILWAY_RUN_UID=0` can then be removed. This is unverified locally: the image was not built on the machine the change was made on, so the host's build is its first. The entrypoint says what it did in the deploy log: `architect entrypoint: data folder ... belongs to uid 10001; starting the server as uid 10001, not root.` when it worked, or one sentence starting `architect entrypoint: STOPPED.` and exit code 70 when it could not make the folder writable or drop privileges. It never starts the server as root instead. If it stops on a platform that forbids changing user, set the platform to run the container as uid 10001 with a volume that user can write, or put `RAILWAY_RUN_UID=0` back and tell me what the line said.
 
 Read [what it protects and what it does not](../SECURITY.md) before putting it in front of other people.
 

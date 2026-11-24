@@ -24,6 +24,8 @@ ROLES = ("owner", "member")
 
 
 MAX_FAILS_PER_NAME = 5          # wrong passwords for one name inside the window before that name is refused
+MAX_FAILS_PER_NAME_ANYWHERE = 50    # failures on one name from all addresses together, after which every try on it waits its turn
+NAME_GAP_S, NAME_GAP_MAX_S = 1.0, 15.0   # the gap between tries on a name that keeps being failed: doubles per failure, up to the maximum
 MAX_FAILS_PER_ADDRESS = 20      # failures from one address, whatever names it tried
 FAIL_WINDOW_MINUTES = 15
 
@@ -55,7 +57,7 @@ def _user(row: dict | None) -> dict | None:
     if not row:
         return None
     return {k: row[k] for k in ("id", "workspace_id", "email", "name", "role", "created", "last_seen")} | {"disabled": bool(row["disabled"]),
-                                                                                                         "spend_cap_usd": row.get("spend_cap_usd")}
+                                                                                                         "spend_cap_usd": row.get("spend_cap_usd"), "team_id": row.get("team_id")}
 
 
 def no_accounts(db: Db) -> bool:
@@ -141,21 +143,45 @@ def _held(db: Db, key: str, limit: int) -> int:
 
 def login(db: Db, email: str, pw: str, address: str | None = None) -> tuple[dict, str]:
     """Returns (user, session token). A wrong name and a wrong password fail the same way and cost the same: one
-    password hash. After MAX_FAILS_PER_NAME failures for a name, or MAX_FAILS_PER_ADDRESS from an address, inside
-    FAIL_WINDOW_MINUTES, sign-in is refused (TooManyAttempts) before the password is looked at."""
+    password hash. Inside FAIL_WINDOW_MINUTES, sign-in is refused (TooManyAttempts) before the password is looked at
+    after MAX_FAILS_PER_NAME failures for a name from one address, or MAX_FAILS_PER_ADDRESS from an address whatever
+    the names.
+
+    A name is not locked for everyone because someone failed on it from one address: that let anybody keep a known
+    login, the admin's included, out for good with five wrong passwords a quarter of an hour (security review
+    2026-11-24, M2). With no address known (the console, a test, or a hosted instance that has not been told where
+    its proxy states the caller's address) there is nothing to tell callers apart by, and the name alone is locked,
+    as it always was."""
+    if not isinstance(email, str) or not isinstance(pw, str):
+        raise PermissionError("email or password not recognised")
     name = (email or "").strip().lower()[:200]
-    keys = [("u:" + name, MAX_FAILS_PER_NAME)] + ([("a:" + address, MAX_FAILS_PER_ADDRESS)] if address else [])
+    address = (address or "").strip()[:80] or None
+    keys = ([("ua:" + name + "|" + address, MAX_FAILS_PER_NAME), ("a:" + address, MAX_FAILS_PER_ADDRESS)] if address else [("u:" + name, MAX_FAILS_PER_NAME)])
     wait = max(_held(db, k, n) for k, n in keys)
     if wait:
         raise TooManyAttempts(wait)
+    if address:
+        # The name itself, whatever address a try claims: once MAX_FAILS_PER_NAME tries on it have failed, the next one
+        # has to wait a gap that doubles with each further failure, and is answered 429 with the wait, at once (nothing
+        # sleeps on a worker). An address with no failure of its own on this name is let past that gap, so the owner
+        # gets in while a stranger fails elsewhere; past MAX_FAILS_PER_NAME_ANYWHERE even that stops, so a guesser who
+        # can invent addresses gets that many quick tries on a name and then a handful a minute.
+        fails = db.q("SELECT at FROM login_attempts WHERE key=? AND at>=? ORDER BY at", "u:" + name, _since())
+        if len(fails) >= MAX_FAILS_PER_NAME:
+            own = db.one("SELECT COUNT(*) AS n FROM login_attempts WHERE key=? AND at>=?", "ua:" + name + "|" + address, _since())["n"]
+            if own or len(fails) >= MAX_FAILS_PER_NAME_ANYWHERE:
+                gap = min(NAME_GAP_MAX_S, NAME_GAP_S * 2 ** min(len(fails) - MAX_FAILS_PER_NAME, 10))
+                since = (datetime.datetime.now() - datetime.datetime.fromisoformat(fails[-1]["at"])).total_seconds()
+                if since < gap:
+                    raise TooManyAttempts(max(1, int(gap - since) + 1))
     row = db.one("SELECT * FROM users WHERE email=?", name)
     ok = verify_password(pw or "", row["pw_hash"], row["pw_salt"]) if row and row["pw_hash"] else (verify_password(pw or "", _NOBODY_HASH, _NOBODY_SALT) and False)
     if not ok:
-        for k, _n in keys:
+        for k in {k for k, _n in keys} | {"u:" + name}:
             db.run("INSERT INTO login_attempts(key, at) VALUES (?,?)", k, now())
         db.run("DELETE FROM login_attempts WHERE at<?", (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat(timespec="seconds"))
         raise PermissionError("email or password not recognised")
-    db.run("DELETE FROM login_attempts WHERE key=?", "u:" + name)
+    db.run("DELETE FROM login_attempts WHERE key IN (?,?)", "u:" + name, "ua:" + name + "|" + (address or ""))
     if row["disabled"]:
         raise PermissionError("this account is disabled")
     token = secrets.token_urlsafe(32)
@@ -185,10 +211,24 @@ def user_for_token(db: Db, token: str | None) -> dict | None:
     return _user(row)
 
 
+def session_for(db: Db, uid: str) -> str:
+    """A new session for a login that has just proved who it is another way (it changed its own password)."""
+    token = secrets.token_urlsafe(32)
+    db.run("INSERT INTO sessions(token_hash, user_id, created, expires, last_seen) VALUES (?,?,?,?,?)", _h(token), uid, now(), _later(SESSION_DAYS), now())
+    return token
+
+
 def change_password(db: Db, uid: str, old: str, new: str) -> None:
+    if not isinstance(old, str) or not isinstance(new, str):
+        raise ValueError("a password is text")
+    wait = _held(db, "p:" + uid, MAX_FAILS_PER_NAME)      # a signed-in session is not a licence to guess the password behind it
+    if wait:
+        raise TooManyAttempts(wait)
     row = db.one("SELECT * FROM users WHERE id=?", uid)
     if not row or not verify_password(old or "", row["pw_hash"], row["pw_salt"]):
+        db.run("INSERT INTO login_attempts(key, at) VALUES (?,?)", "p:" + uid, now())
         raise PermissionError("current password not recognised")
+    db.run("DELETE FROM login_attempts WHERE key=?", "p:" + uid)
     _check(row["email"], new, row["name"])
     h, salt = hash_password(new)
     db.run("UPDATE users SET pw_hash=?, pw_salt=? WHERE id=?", h, salt, uid)
@@ -240,6 +280,7 @@ def admin_table(db: Db, workspace_id: str) -> list[dict]:
         out.append(dict(u,
                         sign_ins=db.one("SELECT COUNT(*) AS n FROM audit WHERE action='user.login' AND user_id=?", uid)["n"],
                         workspaces=db.one("SELECT COUNT(*) AS n FROM estate_members WHERE user_id=?", uid)["n"],
+                        team=(db.one("SELECT name FROM teams WHERE id=?", u.get("team_id")) or {}).get("name") if u.get("team_id") else None,
                         uploads=db.one("SELECT COUNT(*) AS n FROM snapshots WHERE created_by=?", uid)["n"],
                         documents=db.one("SELECT COUNT(*) AS n FROM documents WHERE uploaded_by=?", uid)["n"],
                         chats=db.one("SELECT COUNT(*) AS n FROM conversations WHERE author_id=?", uid)["n"],

@@ -153,7 +153,7 @@ def cmd_backup(args):
 
 
 def cmd_restore(args):
-    """Restore a backup under its original ids. Refuses an estate already in the store; `--inspect` only reads the manifest."""
+    """Restore a backup as a new workspace (its own id; what is inside keeps its ids). Refuses ids the store already holds; `--inspect` only reads the manifest."""
     from .orac import backup as bk
     data, db, blobs, ws = _store(args)
     try:
@@ -250,7 +250,7 @@ def main(argv=None):
     s = sub.add_parser("backup", help="one zip per estate: register, snapshots and exports, notes, conversations, decisions; no credentials")
     s.add_argument("--data", default="./data"); s.add_argument("--estate", help="estate id or name"); s.add_argument("--all", action="store_true")
     s.add_argument("--out", help="a .zip path for one estate, or a folder"); s.add_argument("--list", action="store_true"); s.set_defaults(fn=cmd_backup)
-    s = sub.add_parser("restore", help="restore an estate backup under its original ids (refuses one already in the store)")
+    s = sub.add_parser("restore", help="restore a backup as a new workspace (refuses one whose contents are already in the store)")
     s.add_argument("file"); s.add_argument("--data", default="./data"); s.add_argument("--name", help="restore under another name")
     s.add_argument("--inspect", action="store_true", help="show the manifest and stop"); s.set_defaults(fn=cmd_restore)
     args = ap.parse_args(argv)
